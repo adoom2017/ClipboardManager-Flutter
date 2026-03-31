@@ -52,7 +52,7 @@ class _SettingsBody extends StatelessWidget {
             trailing: CupertinoSwitch(
               value: s.launchAtStartup,
               onChanged: s.setLaunchAtStartup,
-              activeColor: const Color(0xFF34C759),
+              activeTrackColor: const Color(0xFF34C759),
             ),
           ),
         ]),
@@ -64,7 +64,7 @@ class _SettingsBody extends StatelessWidget {
             trailing: CupertinoSwitch(
               value: s.privacyGuardEnabled,
               onChanged: s.setPrivacyGuardEnabled,
-              activeColor: const Color(0xFF34C759),
+              activeTrackColor: const Color(0xFF34C759),
             ),
           ),
         ]),
@@ -76,7 +76,7 @@ class _SettingsBody extends StatelessWidget {
             trailing: CupertinoSwitch(
               value: s.autoSync,
               onChanged: s.setAutoSync,
-              activeColor: const Color(0xFF34C759),
+              activeTrackColor: const Color(0xFF34C759),
             ),
           ),
         ]),
@@ -151,7 +151,7 @@ class _SettingsBody extends StatelessWidget {
             borderRadius: BorderRadius.circular(10),
             boxShadow: [
               BoxShadow(
-                color: Colors.black.withOpacity(0.04),
+                color: Colors.black.withValues(alpha: 0.04),
                 blurRadius: 2,
                 offset: const Offset(0, 1),
               ),

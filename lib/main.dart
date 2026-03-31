@@ -1,3 +1,4 @@
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:hotkey_manager/hotkey_manager.dart';
@@ -8,12 +9,15 @@ import 'package:window_manager/window_manager.dart';
 import 'package:win32/win32.dart' as win32;
 import 'core/auto_paste_service.dart';
 import 'core/clipboard_monitor.dart';
+import 'core/window_activation_service.dart';
 import 'storage/clipboard_store.dart';
 import 'storage/settings_store.dart';
 import 'sync/sync_service.dart';
 import 'views/clipboard_list_page.dart';
 import 'views/settings_page.dart';
 import 'views/sync_page.dart';
+
+final ValueNotifier<int> shellPageIndex = ValueNotifier<int>(0);
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
@@ -48,10 +52,11 @@ void main() async {
     if (await windowManager.isVisible()) {
       await windowManager.hide();
     } else {
-      // Save the currently focused window BEFORE we steal focus
+      // Save the currently focused window before showing the picker so a
+      // selection can paste back into the original target.
       AutoPasteService.previousForegroundWindow = win32.GetForegroundWindow();
-      await windowManager.show();
-      await windowManager.focus();
+      shellPageIndex.value = 0;
+      await WindowActivationService.showInactive();
     }
   });
 
@@ -77,6 +82,8 @@ class ClipboardManagerApp extends StatelessWidget {
         title: 'Clipboard Manager',
         debugShowCheckedModeBanner: false,
         theme: ThemeData(
+          fontFamily:
+              defaultTargetPlatform == TargetPlatform.windows ? 'Segoe UI' : null,
           colorScheme: ColorScheme.fromSeed(
             seedColor: const Color(0xFF007AFF),
           ).copyWith(primary: const Color(0xFF007AFF)),
@@ -111,14 +118,21 @@ class _MainShellState extends State<MainShell>
     super.initState();
     windowManager.addListener(this);
     trayManager.addListener(this);
+    shellPageIndex.addListener(_handleExternalPageChange);
     _initTray();
   }
 
   @override
   void dispose() {
+    shellPageIndex.removeListener(_handleExternalPageChange);
     windowManager.removeListener(this);
     trayManager.removeListener(this);
     super.dispose();
+  }
+
+  void _handleExternalPageChange() {
+    if (_selectedIndex == shellPageIndex.value) return;
+    setState(() => _selectedIndex = shellPageIndex.value);
   }
 
   Future<void> _initTray() async {
@@ -140,16 +154,16 @@ class _MainShellState extends State<MainShell>
   void onTrayIconRightMouseDown() => trayManager.popUpContextMenu();
 
   @override
-  void onTrayMenuItemClick(MenuItem menuItem) {
+  void onTrayMenuItemClick(MenuItem menuItem) async {
     switch (menuItem.key) {
       case 'show':
-        windowManager.show();
-        windowManager.focus();
+        await WindowActivationService.showInteractive();
+        await windowManager.focus();
         break;
       case 'settings':
-        windowManager.show();
-        windowManager.focus();
-        setState(() => _selectedIndex = 2);
+        shellPageIndex.value = 2;
+        await WindowActivationService.showInteractive();
+        await windowManager.focus();
         break;
       case 'quit':
         _quit();
@@ -181,7 +195,10 @@ class _MainShellState extends State<MainShell>
           Expanded(child: _pages[_selectedIndex]),
           _MacTabBar(
             selectedIndex: _selectedIndex,
-            onTap: (i) => setState(() => _selectedIndex = i),
+            onTap: (i) {
+              shellPageIndex.value = i;
+              setState(() => _selectedIndex = i);
+            },
           ),
         ],
       ),
@@ -259,7 +276,7 @@ class _TrafficLightState extends State<_TrafficLight> {
           width: 12,
           height: 12,
           decoration: BoxDecoration(
-            color: _hovered ? widget.color : widget.color.withOpacity(0.8),
+            color: _hovered ? widget.color : widget.color.withValues(alpha: 0.8),
             shape: BoxShape.circle,
           ),
         ),
@@ -362,4 +379,3 @@ class _TabItemState extends State<_TabItem> {
     );
   }
 }
-

@@ -10,7 +10,7 @@ class SyncCrypto {
   static final _hkdf = Hkdf(hmac: Hmac.sha256(), outputLength: 32);
 
   /// Derive 32-byte key via HKDF-SHA256.
-  /// IKM = "ClipboardManagerSync", salt = "<id1>:<id2>:<pin>" (IDs sorted),
+  /// IKM = "ClipboardManagerSync", salt = "&lt;id1&gt;:&lt;id2&gt;:&lt;pin&gt;" (IDs sorted),
   /// info = "v1-sync-key".
   static Future<SecretKey> deriveKey({
     required String deviceId1,

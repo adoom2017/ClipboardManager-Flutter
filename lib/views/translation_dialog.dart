@@ -7,7 +7,6 @@ const _kAccent = Color(0xFF007AFF);
 const _kTextPrimary = Color(0xFF1C1C1E);
 const _kTextSecondary = Color(0xFF8E8E93);
 const _kSurface = Color(0xFFFFFFFF);
-const _kBg = Color(0xFFF2F2F7);
 
 /// macOS-style translation popup.
 ///
@@ -56,9 +55,19 @@ class _TranslationDialogState extends State<TranslationDialog> {
         apiKey: s.translationApiKey,
         model: s.translationModel,
       );
-      if (mounted) setState(() { _phase = _Phase.done; _result = result; });
+      if (mounted) {
+        setState(() {
+          _phase = _Phase.done;
+          _result = result;
+        });
+      }
     } catch (e) {
-      if (mounted) setState(() { _phase = _Phase.error; _error = e.toString().replaceFirst('Exception: ', ''); });
+      if (mounted) {
+        setState(() {
+          _phase = _Phase.error;
+          _error = e.toString().replaceFirst('Exception: ', '');
+        });
+      }
     }
   }
 
@@ -83,7 +92,7 @@ class _TranslationDialogState extends State<TranslationDialog> {
           borderRadius: BorderRadius.circular(12),
           boxShadow: [
             BoxShadow(
-              color: Colors.black.withOpacity(0.18),
+              color: Colors.black.withValues(alpha: 0.18),
               blurRadius: 24,
               offset: const Offset(0, 8),
             ),

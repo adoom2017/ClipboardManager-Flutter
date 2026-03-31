@@ -1,5 +1,4 @@
 import 'package:flutter/material.dart';
-import 'package:provider/provider.dart';
 import '../sync/sync_service.dart';
 import '../sync/sync_discovery.dart';
 import '../storage/settings_store.dart';
@@ -143,7 +142,7 @@ class _SyncPageState extends State<SyncPage> {
                   width: 36,
                   height: 36,
                   decoration: BoxDecoration(
-                    color: _kAccent.withOpacity(0.12),
+                    color: _kAccent.withValues(alpha: 0.12),
                     borderRadius: BorderRadius.circular(8),
                   ),
                   child: const Icon(Icons.laptop_windows,
@@ -163,7 +162,7 @@ class _SyncPageState extends State<SyncPage> {
                       style: const TextStyle(
                           fontSize: 11,
                           color: _kTextSecondary,
-                          fontFamily: 'monospace'),
+                          fontFamily: 'Consolas'),
                     ),
                   ],
                 ),
@@ -271,7 +270,7 @@ class _SyncPageState extends State<SyncPage> {
             borderRadius: BorderRadius.circular(10),
             boxShadow: [
               BoxShadow(
-                color: Colors.black.withOpacity(0.04),
+                color: Colors.black.withValues(alpha: 0.04),
                 blurRadius: 2,
                 offset: const Offset(0, 1),
               ),
@@ -287,7 +286,7 @@ class _SyncPageState extends State<SyncPage> {
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
       decoration: BoxDecoration(
-        color: color.withOpacity(0.12),
+        color: color.withValues(alpha: 0.12),
         borderRadius: BorderRadius.circular(10),
       ),
       child: Text(label,

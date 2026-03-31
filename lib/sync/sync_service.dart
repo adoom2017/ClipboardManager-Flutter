@@ -7,6 +7,7 @@ import '../models/clipboard_item.dart';
 import '../storage/clipboard_store.dart';
 import '../storage/settings_store.dart';
 import 'sync_connection.dart';
+import 'sync_advertiser.dart';
 import 'sync_crypto.dart';
 import 'sync_discovery.dart';
 import 'sync_message.dart';
@@ -33,6 +34,7 @@ class SyncService extends ChangeNotifier {
 
   ServerSocket? _server;
   final Map<String, SyncConnection> _connections = {};
+  final SyncAdvertiser _advertiser = SyncAdvertiser();
   final SyncDiscovery _discovery = SyncDiscovery();
   final List<DiscoveredPeer> _discoveredPeers = [];
   List<DiscoveredPeer> get discoveredPeers => List.unmodifiable(_discoveredPeers);
@@ -61,8 +63,17 @@ class SyncService extends ChangeNotifier {
     final settings = SettingsStore();
     _server = await ServerSocket.bind(InternetAddress.anyIPv4, 0);
     _server!.listen(_onIncomingConnection);
+    await _advertiser.start(
+      localId: settings.syncLocalDeviceId,
+      localName: _deviceName(),
+      serverPort: _server!.port,
+    );
 
-    await _discovery.start(localId: settings.syncLocalDeviceId);
+    await _discovery.start(
+      localId: settings.syncLocalDeviceId,
+      localName: _deviceName(),
+      serverPort: _server!.port,
+    );
     _discovery.peers.listen((peer) {
       if (!_discoveredPeers.any((p) => p.id == peer.id)) {
         _discoveredPeers.add(peer);
@@ -72,6 +83,7 @@ class SyncService extends ChangeNotifier {
   }
 
   Future<void> stop() async {
+    await _advertiser.stop();
     await _discovery.stop();
     for (final conn in _connections.values) {
       await conn.close();

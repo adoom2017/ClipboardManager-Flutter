@@ -103,7 +103,7 @@ class _ClipboardListBody extends StatelessWidget {
                     children: [
                       Icon(Icons.content_paste_off,
                           size: 40,
-                          color: _kTextSecondary.withOpacity(0.35)),
+                          color: _kTextSecondary.withValues(alpha: 0.35)),
                       const SizedBox(height: 10),
                       const Text('暂无剪贴板记录',
                           style: TextStyle(
