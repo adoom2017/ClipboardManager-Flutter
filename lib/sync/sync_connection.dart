@@ -1,0 +1,64 @@
+import 'dart:async';
+import 'dart:convert';
+import 'dart:io';
+import 'dart:typed_data';
+import 'sync_message.dart';
+
+typedef MessageHandler = void Function(SyncMessage msg);
+
+/// Wraps a TCP socket with 4-byte big-endian length framing.
+class SyncConnection {
+  final Socket _socket;
+  final String peerId;
+  bool _closed = false;
+
+  final StreamController<SyncMessage> _msgCtrl = StreamController.broadcast();
+  Stream<SyncMessage> get messages => _msgCtrl.stream;
+
+  bool get isConnected => !_closed;
+
+  SyncConnection(this._socket, this.peerId) {
+    _socket.listen(
+      _onData,
+      onDone: _onClose,
+      onError: (_) => _onClose(),
+    );
+  }
+
+  final List<int> _buf = [];
+
+  void _onData(List<int> data) {
+    _buf.addAll(data);
+    while (true) {
+      if (_buf.length < 4) break;
+      final len = ByteData.sublistView(Uint8List.fromList(_buf.sublist(0, 4)))
+          .getUint32(0, Endian.big);
+      if (_buf.length < 4 + len) break;
+      final msgBytes = _buf.sublist(4, 4 + len);
+      _buf.removeRange(0, 4 + len);
+      try {
+        final msg = SyncMessage.decode(utf8.decode(msgBytes));
+        _msgCtrl.add(msg);
+      } catch (_) {}
+    }
+  }
+
+  void _onClose() {
+    _closed = true;
+    _msgCtrl.close();
+  }
+
+  Future<void> send(SyncMessage msg) async {
+    if (_closed) return;
+    final bytes = utf8.encode(msg.encode());
+    final header = ByteData(4)..setUint32(0, bytes.length, Endian.big);
+    _socket.add(header.buffer.asUint8List());
+    _socket.add(bytes);
+    await _socket.flush();
+  }
+
+  Future<void> close() async {
+    _closed = true;
+    await _socket.close();
+  }
+}
