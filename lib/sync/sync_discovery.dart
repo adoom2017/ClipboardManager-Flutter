@@ -61,13 +61,25 @@ class SyncDiscovery {
     required String localName,
     required int serverPort,
   }) async {
-    _client = MDnsClient(rawDatagramSocketFactory: _bindSocket);
-    await _client!.start(interfacesFactory: _interfacesFactory);
     await _startBroadcastDiscovery(
       localId: localId,
       localName: localName,
       serverPort: serverPort,
     );
+
+    _client = MDnsClient(rawDatagramSocketFactory: _bindSocket);
+    try {
+      await _client!.start(interfacesFactory: _interfacesFactory);
+    } on SocketException {
+      _client = null;
+      return;
+    } on OSError {
+      _client = null;
+      return;
+    } catch (_) {
+      _client = null;
+      return;
+    }
 
     // Discover peers
     _sub = _client!
@@ -176,6 +188,7 @@ class SyncDiscovery {
 
   Future<void> stop() async {
     await _sub?.cancel();
+    _sub = null;
     _announceTimer?.cancel();
     _announceTimer = null;
     _broadcastSocket?.close();
