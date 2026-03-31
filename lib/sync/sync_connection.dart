@@ -10,6 +10,7 @@ typedef MessageHandler = void Function(SyncMessage msg);
 class SyncConnection {
   final Socket _socket;
   final String peerId;
+  final void Function()? onClosed;
   bool _closed = false;
 
   final StreamController<SyncMessage> _msgCtrl = StreamController.broadcast();
@@ -17,7 +18,7 @@ class SyncConnection {
 
   bool get isConnected => !_closed;
 
-  SyncConnection(this._socket, this.peerId) {
+  SyncConnection(this._socket, this.peerId, {this.onClosed}) {
     _socket.listen(
       _onData,
       onDone: _onClose,
@@ -44,7 +45,9 @@ class SyncConnection {
   }
 
   void _onClose() {
+    if (_closed) return;
     _closed = true;
+    onClosed?.call();
     _msgCtrl.close();
   }
 

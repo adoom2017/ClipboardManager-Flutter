@@ -41,6 +41,8 @@ class SyncService extends ChangeNotifier {
   List<DiscoveredPeer> get discoveredPeers => List.unmodifiable(_discoveredPeers);
   StreamSubscription<ClipboardItem>? _clipboardSub;
 
+  bool isPeerOnline(String peerId) => _connections[peerId]?.isConnected == true;
+
   // Pairing pending: waiting for user confirmation
   final Map<String, _PendingPairing> _pendingPairings = {};
 
@@ -105,8 +107,13 @@ class SyncService extends ChangeNotifier {
     final settings = SettingsStore();
     _log('connectTo peerId=${peer.id} host=${peer.host} port=${peer.port}');
     final socket = await Socket.connect(peer.host, peer.port);
-    final conn = SyncConnection(socket, peer.id);
+    final conn = SyncConnection(
+      socket,
+      peer.id,
+      onClosed: () => _handleConnectionClosed(peer.id),
+    );
     _connections[peer.id] = conn;
+    notifyListeners();
 
     // Check if already paired
     final existing = pairedPeers.where((p) => p.id == peer.id).firstOrNull;
@@ -145,7 +152,11 @@ class SyncService extends ChangeNotifier {
 
   void _onIncomingConnection(Socket socket) {
     _log('incoming TCP connection from ${socket.remoteAddress.address}:${socket.remotePort}');
-    final conn = SyncConnection(socket, '');
+    final conn = SyncConnection(
+      socket,
+      '',
+      onClosed: () => notifyListeners(),
+    );
     conn.messages.listen((msg) => _handleMessage(msg, conn));
   }
 
@@ -156,6 +167,7 @@ class SyncService extends ChangeNotifier {
     switch (msg.type) {
       case SyncMessageType.hello:
         _connections[msg.senderId] = conn;
+        notifyListeners();
         _log('registered connection for senderID=${msg.senderId}');
         break;
 
@@ -239,6 +251,7 @@ class SyncService extends ChangeNotifier {
         _log('pairing rejected by ${msg.senderId}');
         await conn.close();
         _connections.remove(msg.senderId);
+        notifyListeners();
         break;
 
       case SyncMessageType.items:
@@ -287,6 +300,7 @@ class SyncService extends ChangeNotifier {
     await _sendPairingReject(conn);
     await conn?.close();
     _connections.remove(peerId);
+    notifyListeners();
   }
 
   Future<void> submitPairingPin(String peerId, String pin) async {
@@ -436,6 +450,14 @@ class SyncService extends ChangeNotifier {
     if (kDebugMode) {
       debugPrint('[SyncService] $message');
     }
+  }
+
+  void _handleConnectionClosed(String peerId) {
+    final existing = _connections[peerId];
+    if (existing != null && !existing.isConnected) {
+      _connections.remove(peerId);
+    }
+    notifyListeners();
   }
 }
 

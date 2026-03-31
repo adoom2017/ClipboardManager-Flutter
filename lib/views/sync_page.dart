@@ -192,7 +192,7 @@ class _SyncPageState extends State<SyncPage> {
             for (int i = 0; i < paired.length; i++) ...[
               _PeerRow(
                 peer: paired[i],
-                isOnline: discovered.any((d) => d.id == paired[i].id),
+                isOnline: sync.isPeerOnline(paired[i].id),
                 trailing: null,
               ),
               if (i < paired.length - 1)
