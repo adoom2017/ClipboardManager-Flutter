@@ -217,6 +217,7 @@ class SyncAdvertiser {
   void _handleQuery(Datagram datagram) {
     final query = _decodeMdnsQuery(datagram.data);
     if (query == null) return;
+    _log('received mDNS query type=${query.resourceRecordType} name=${query.fullyQualifiedName} from=${datagram.address.address}:${datagram.port}');
 
     final answers = <_DnsRecord>[];
     final additionals = <_DnsRecord>[];
@@ -300,6 +301,7 @@ class SyncAdvertiser {
     final packet = _decodeMdnsPacket(datagram.data);
     if (packet == null) return;
     if (!packet.isResponse || packet.answers.isEmpty) return;
+    _log('received mDNS response answers=${packet.answers.length} from=${datagram.address.address}:${datagram.port}');
 
     final ptrTargets = <String>{};
     final srvRecords = <String, _SrvRecordData>{};
@@ -314,7 +316,10 @@ class SyncAdvertiser {
             packet.byteData,
             answer.dataOffset,
           )?.name;
-          if (target != null) ptrTargets.add(target);
+          if (target != null) {
+            _log('PTR answer name=${answer.name} target=$target');
+            ptrTargets.add(target);
+          }
           break;
         case _resourceRecordTypeService:
           if (answer.dataLength < 6) continue;
@@ -325,16 +330,18 @@ class SyncAdvertiser {
             answer.dataOffset + 6,
           )?.name;
           if (target != null) {
+            _log('SRV answer name=${answer.name} target=$target port=$port');
             srvRecords[answer.name.toLowerCase()] =
                 _SrvRecordData(target: target, port: port);
           }
           break;
         case _resourceRecordTypeAddressIPv4:
           if (answer.dataLength != 4) continue;
-          aRecords[answer.name.toLowerCase()] = InternetAddress.fromRawAddress(
-            packet.rawData.sublist(answer.dataOffset, answer.dataOffset + 4),
-            type: InternetAddressType.IPv4,
-          );
+          final address = InternetAddress.fromRawAddress(
+              packet.rawData.sublist(answer.dataOffset, answer.dataOffset + 4),
+              type: InternetAddressType.IPv4);
+          _log('A answer name=${answer.name} address=${address.address}');
+          aRecords[answer.name.toLowerCase()] = address;
           break;
       }
     }
