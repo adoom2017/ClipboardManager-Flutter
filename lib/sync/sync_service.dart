@@ -3,6 +3,7 @@ import 'dart:convert';
 import 'dart:io';
 import 'package:flutter/foundation.dart';
 import 'package:cryptography/cryptography.dart';
+import '../core/clipboard_monitor.dart';
 import '../models/clipboard_item.dart';
 import '../storage/clipboard_store.dart';
 import '../storage/settings_store.dart';
@@ -38,6 +39,7 @@ class SyncService extends ChangeNotifier {
   final SyncDiscovery _discovery = SyncDiscovery();
   final List<DiscoveredPeer> _discoveredPeers = [];
   List<DiscoveredPeer> get discoveredPeers => List.unmodifiable(_discoveredPeers);
+  StreamSubscription<ClipboardItem>? _clipboardSub;
 
   // Pairing pending: waiting for user confirmation
   final Map<String, _PendingPairing> _pendingPairings = {};
@@ -63,6 +65,7 @@ class SyncService extends ChangeNotifier {
     final settings = SettingsStore();
     _server = await ServerSocket.bind(InternetAddress.anyIPv4, 0);
     _server!.listen(_onIncomingConnection);
+    _setupClipboardSync();
     await _advertiser.start(
       localId: settings.syncLocalDeviceId,
       localName: _deviceName(),
@@ -83,6 +86,8 @@ class SyncService extends ChangeNotifier {
   }
 
   Future<void> stop() async {
+    await _clipboardSub?.cancel();
+    _clipboardSub = null;
     await _advertiser.stop();
     await _discovery.stop();
     for (final conn in _connections.values) {
@@ -115,14 +120,16 @@ class SyncService extends ChangeNotifier {
       // Already paired - proceed to sync
       await _syncItems(conn, SyncCrypto.keyFromBase64(existing.keyBase64));
     } else {
-      // Start pairing
-      final pin = _generatePin();
-      _pendingPairings[peer.id] = _PendingPairing(peerId: peer.id, peerName: peer.name, pin: pin);
+      // Start pairing. The remote side will display a PIN that the local user enters later.
+      _pendingPairings[peer.id] = _PendingPairing(
+        peerId: peer.id,
+        peerName: peer.name,
+        initiatedByLocal: true,
+      );
       await conn.send(SyncMessage(
         type: SyncMessageType.pairingRequest,
         senderId: settings.syncLocalDeviceId,
         senderName: _deviceName(),
-        plainPayload: jsonEncode({'pin': pin}),
       ));
     }
 
@@ -145,22 +152,62 @@ class SyncService extends ChangeNotifier {
         break;
 
       case SyncMessageType.pairingRequest:
-        final payload = jsonDecode(msg.plainPayload ?? '{}') as Map<String, dynamic>;
-        final pin = payload['pin'] as String? ?? '';
+        final pin = _generatePin();
         onPairingRequest?.call(msg.senderId, msg.senderName, pin);
         _pendingPairings[msg.senderId] = _PendingPairing(
-          peerId: msg.senderId, peerName: msg.senderName, pin: pin,
+          peerId: msg.senderId,
+          peerName: msg.senderName,
+          pin: pin,
+          initiatedByLocal: false,
         );
         break;
 
+      case SyncMessageType.pairingPin:
+        final pending = _pendingPairings[msg.senderId];
+        if (pending == null || pending.initiatedByLocal || pending.pin == null) {
+          await _sendPairingReject(conn);
+          break;
+        }
+
+        final pin = _decodePlainPayload(msg.plainPayload);
+        if (pin == null || pin != pending.pin) {
+          await _sendPairingReject(conn);
+          break;
+        }
+
+        final key = await SyncCrypto.deriveKey(
+          deviceId1: SettingsStore().syncLocalDeviceId,
+          deviceId2: msg.senderId,
+          pin: pin,
+        );
+        await _savePeer(PairedPeer(
+          id: msg.senderId,
+          name: msg.senderName,
+          keyBase64: await SyncCrypto.keyToBase64(key),
+        ));
+        _pendingPairings.remove(msg.senderId);
+
+        await conn.send(SyncMessage(
+          type: SyncMessageType.pairingAck,
+          senderId: SettingsStore().syncLocalDeviceId,
+          senderName: _deviceName(),
+          plainPayload: _encodePlainPayload(pin),
+        ));
+        notifyListeners();
+
+        if (SettingsStore().autoSync) {
+          await _syncItems(conn, key);
+        }
+        break;
+
       case SyncMessageType.pairingAck:
-        // Receiver confirmed pairing
         final pending = _pendingPairings.remove(msg.senderId);
-        if (pending != null) {
+        final pin = _decodePlainPayload(msg.plainPayload);
+        if (pending != null && pending.initiatedByLocal && pending.pin != null && pin == pending.pin) {
           final key = await SyncCrypto.deriveKey(
             deviceId1: SettingsStore().syncLocalDeviceId,
             deviceId2: msg.senderId,
-            pin: pending.pin,
+            pin: pin!,
           );
           await _savePeer(PairedPeer(
             id: msg.senderId,
@@ -186,9 +233,10 @@ class SyncService extends ChangeNotifier {
         final key = SyncCrypto.keyFromBase64(peer.keyBase64);
         try {
           final plain = await SyncCrypto.decrypt(encrypted, key);
-          final list = jsonDecode(plain) as List<dynamic>;
+          final payload = jsonDecode(plain) as Map<String, dynamic>;
+          final list = (payload['items'] as List<dynamic>? ?? const []);
           for (final raw in list) {
-            final item = ClipboardItem.fromJson(raw as Map<String, dynamic>);
+            final item = _syncItemFromJson(raw as Map<String, dynamic>);
             await ClipboardStore().addItem(item);
           }
         } catch (_) {}
@@ -210,44 +258,30 @@ class SyncService extends ChangeNotifier {
   // ─── Pairing confirmation (called from UI) ────────────────────────────────
 
   Future<void> confirmPairing(String peerId) async {
-    final pending = _pendingPairings[peerId];
-    final conn = _connections[peerId];
-    if (pending == null || conn == null) return;
-
-    final key = await SyncCrypto.deriveKey(
-      deviceId1: SettingsStore().syncLocalDeviceId,
-      deviceId2: peerId,
-      pin: pending.pin,
-    );
-    await _savePeer(PairedPeer(
-      id: peerId,
-      name: pending.peerName,
-      keyBase64: await SyncCrypto.keyToBase64(key),
-    ));
-    _pendingPairings.remove(peerId);
-
-    await conn.send(SyncMessage(
-      type: SyncMessageType.pairingAck,
-      senderId: SettingsStore().syncLocalDeviceId,
-      senderName: _deviceName(),
-    ));
+    // Incoming pairing is completed automatically after the initiator submits the shown PIN.
     notifyListeners();
-
-    if (SettingsStore().autoSync) {
-      await _syncItems(conn, key);
-    }
   }
 
   Future<void> rejectPairing(String peerId) async {
     final conn = _connections[peerId];
     _pendingPairings.remove(peerId);
-    await conn?.send(SyncMessage(
-      type: SyncMessageType.pairingReject,
-      senderId: SettingsStore().syncLocalDeviceId,
-      senderName: _deviceName(),
-    ));
+    await _sendPairingReject(conn);
     await conn?.close();
     _connections.remove(peerId);
+  }
+
+  Future<void> submitPairingPin(String peerId, String pin) async {
+    final pending = _pendingPairings[peerId];
+    final conn = _connections[peerId];
+    if (pending == null || conn == null || !pending.initiatedByLocal) return;
+
+    pending.pin = pin;
+    await conn.send(SyncMessage(
+      type: SyncMessageType.pairingPin,
+      senderId: SettingsStore().syncLocalDeviceId,
+      senderName: _deviceName(),
+      plainPayload: _encodePlainPayload(pin),
+    ));
   }
 
   Future<void> manualSync() async {
@@ -267,7 +301,9 @@ class SyncService extends ChangeNotifier {
         .items
         .where((i) => i.contentType == ClipboardContentType.text)
         .toList();
-    final payload = jsonEncode(textItems.map((i) => i.toJson()).toList());
+    final payload = jsonEncode({
+      'items': textItems.map((i) => _syncItemToJson(i)).toList(),
+    });
     final encrypted = await SyncCrypto.encrypt(payload, key);
     await conn.send(SyncMessage(
       type: SyncMessageType.items,
@@ -295,11 +331,97 @@ class SyncService extends ChangeNotifier {
   String _deviceName() {
     return Platform.localHostname;
   }
+
+  void _setupClipboardSync() {
+    _clipboardSub?.cancel();
+    _clipboardSub = ClipboardMonitor.instance.newItems.listen((item) async {
+      if (!SettingsStore().autoSync || item.contentType != ClipboardContentType.text) return;
+      for (final peer in pairedPeers) {
+        final conn = _connections[peer.id];
+        if (conn == null || !conn.isConnected) continue;
+        await _syncSingleItem(conn, SyncCrypto.keyFromBase64(peer.keyBase64), item);
+      }
+    });
+  }
+
+  Future<void> _syncSingleItem(SyncConnection conn, SecretKey key, ClipboardItem item) async {
+    final payload = jsonEncode({
+      'items': [_syncItemToJson(item)],
+    });
+    final encrypted = await SyncCrypto.encrypt(payload, key);
+    await conn.send(SyncMessage(
+      type: SyncMessageType.items,
+      senderId: SettingsStore().syncLocalDeviceId,
+      senderName: _deviceName(),
+      encryptedPayload: encrypted,
+    ));
+  }
+
+  Future<void> _sendPairingReject(SyncConnection? conn) async {
+    await conn?.send(SyncMessage(
+      type: SyncMessageType.pairingReject,
+      senderId: SettingsStore().syncLocalDeviceId,
+      senderName: _deviceName(),
+    ));
+  }
+
+  String _encodePlainPayload(String value) {
+    return base64.encode(utf8.encode(value));
+  }
+
+  String? _decodePlainPayload(String? value) {
+    if (value == null) return null;
+    try {
+      return utf8.decode(base64.decode(value));
+    } catch (_) {
+      return value;
+    }
+  }
+
+  Map<String, dynamic> _syncItemToJson(ClipboardItem item) => {
+        'id': item.id,
+        'content': item.content,
+        'timestamp': item.timestamp.toUtc().difference(_appleReferenceDate).inMilliseconds / 1000.0,
+        'sourceApp': item.sourceApp,
+        'isPinned': item.isPinned,
+      };
+
+  ClipboardItem _syncItemFromJson(Map<String, dynamic> json) {
+    final timestamp = json['timestamp'];
+    return ClipboardItem(
+      id: json['id'] as String,
+      contentType: ClipboardContentType.text,
+      content: json['content'] as String? ?? '',
+      timestamp: _decodeSyncTimestamp(timestamp),
+      sourceApp: json['sourceApp'] as String? ?? 'Unknown',
+      isPinned: json['isPinned'] as bool? ?? false,
+    );
+  }
+
+  DateTime _decodeSyncTimestamp(dynamic value) {
+    if (value is num) {
+      return _appleReferenceDate.add(
+        Duration(milliseconds: (value * 1000).round()),
+      );
+    }
+    if (value is String) {
+      return DateTime.tryParse(value)?.toUtc() ?? DateTime.now().toUtc();
+    }
+    return DateTime.now().toUtc();
+  }
 }
 
 class _PendingPairing {
   final String peerId;
   final String peerName;
-  final String pin;
-  _PendingPairing({required this.peerId, required this.peerName, required this.pin});
+  final bool initiatedByLocal;
+  String? pin;
+  _PendingPairing({
+    required this.peerId,
+    required this.peerName,
+    required this.initiatedByLocal,
+    this.pin,
+  });
 }
+
+final DateTime _appleReferenceDate = DateTime.utc(2001, 1, 1);

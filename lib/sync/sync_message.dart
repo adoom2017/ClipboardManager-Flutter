@@ -3,6 +3,7 @@ import 'dart:convert';
 enum SyncMessageType {
   hello,
   pairingRequest,
+  pairingPin,
   pairingAck,
   pairingReject,
   items,
@@ -28,7 +29,7 @@ class SyncMessage {
 
   Map<String, dynamic> toJson() => {
         'type': type.name,
-        'senderId': senderId,
+        'senderID': senderId,
         'senderName': senderName,
         if (plainPayload != null) 'plainPayload': plainPayload,
         if (encryptedPayload != null) 'encryptedPayload': encryptedPayload,
@@ -40,7 +41,7 @@ class SyncMessage {
         (e) => e.name == json['type'],
         orElse: () => SyncMessageType.ping,
       ),
-      senderId: json['senderId'] as String? ?? '',
+      senderId: (json['senderID'] ?? json['senderId']) as String? ?? '',
       senderName: json['senderName'] as String? ?? '',
       plainPayload: json['plainPayload'] as String?,
       encryptedPayload: json['encryptedPayload'] as String?,

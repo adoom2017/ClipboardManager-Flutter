@@ -72,13 +72,13 @@ class _SyncPageState extends State<SyncPage> {
                         color: _kAccent)),
               ),
               const SizedBox(height: 8),
-              const Text('请确认对方设备上的 PIN 码一致',
+              const Text('请让对方在其设备上输入这个 PIN 码',
                   style: TextStyle(fontSize: 11, color: _kTextSecondary)),
               const SizedBox(height: 16),
               Row(
                 mainAxisAlignment: MainAxisAlignment.center,
                 children: [
-                  _btn('拒绝',
+                  _btn('取消配对',
                       bg: const Color(0xFFE5E5EA),
                       fg: _kTextPrimary,
                       onTap: () {
@@ -86,7 +86,7 @@ class _SyncPageState extends State<SyncPage> {
                         SyncService.instance.rejectPairing(peerId);
                       }),
                   const SizedBox(width: 8),
-                  _btn('确认配对',
+                  _btn('知道了',
                       bg: _kAccent,
                       fg: Colors.white,
                       onTap: () {
@@ -299,7 +299,11 @@ class _SyncPageState extends State<SyncPage> {
 
   Widget _pairBtn(DiscoveredPeer peer, SyncService sync) {
     return GestureDetector(
-      onTap: () => sync.connectTo(peer),
+      onTap: () async {
+        await sync.connectTo(peer);
+        if (!mounted) return;
+        _showOutgoingPinDialog(peer, sync);
+      },
       child: Container(
         padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 4),
         decoration: BoxDecoration(
@@ -311,6 +315,73 @@ class _SyncPageState extends State<SyncPage> {
                 fontSize: 12,
                 color: Colors.white,
                 fontWeight: FontWeight.w500)),
+      ),
+    );
+  }
+
+  void _showOutgoingPinDialog(DiscoveredPeer peer, SyncService sync) {
+    final controller = TextEditingController();
+    showDialog(
+      context: context,
+      barrierDismissible: false,
+      builder: (ctx) => Dialog(
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+        backgroundColor: Colors.white,
+        child: Padding(
+          padding: const EdgeInsets.fromLTRB(20, 20, 20, 16),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              const Text('输入配对 PIN',
+                  style: TextStyle(
+                      fontWeight: FontWeight.w600,
+                      fontSize: 14,
+                      color: _kTextPrimary)),
+              const SizedBox(height: 6),
+              Text('请输入 "$peer.name" 上显示的 6 位 PIN',
+                  style: const TextStyle(fontSize: 13, color: _kTextSecondary)),
+              const SizedBox(height: 14),
+              TextField(
+                controller: controller,
+                autofocus: true,
+                maxLength: 6,
+                keyboardType: TextInputType.number,
+                textAlign: TextAlign.center,
+                style: const TextStyle(
+                  fontSize: 28,
+                  fontWeight: FontWeight.w700,
+                  letterSpacing: 6,
+                  color: _kAccent,
+                ),
+                decoration: const InputDecoration(
+                  counterText: '',
+                  hintText: '000000',
+                ),
+              ),
+              const SizedBox(height: 16),
+              Row(
+                mainAxisAlignment: MainAxisAlignment.center,
+                children: [
+                  _btn('取消',
+                      bg: const Color(0xFFE5E5EA),
+                      fg: _kTextPrimary,
+                      onTap: () {
+                        Navigator.pop(ctx);
+                      }),
+                  const SizedBox(width: 8),
+                  _btn('发送 PIN',
+                      bg: _kAccent,
+                      fg: Colors.white,
+                      onTap: () {
+                        if (controller.text.length != 6) return;
+                        sync.submitPairingPin(peer.id, controller.text);
+                        Navigator.pop(ctx);
+                      }),
+                ],
+              ),
+            ],
+          ),
+        ),
       ),
     );
   }
@@ -422,4 +493,3 @@ class _SyncButtonState extends State<_SyncButton> {
     );
   }
 }
-

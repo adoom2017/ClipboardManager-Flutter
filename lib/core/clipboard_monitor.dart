@@ -16,6 +16,10 @@ class ClipboardMonitor {
   Timer? _timer;
   String? _lastText;
   bool _running = false;
+  final StreamController<ClipboardItem> _newItems =
+      StreamController<ClipboardItem>.broadcast();
+
+  Stream<ClipboardItem> get newItems => _newItems.stream;
 
   void start() {
     if (_running) return;
@@ -49,6 +53,7 @@ class ClipboardMonitor {
 
       if (!PrivacyGuard.isAllowed(item)) return;
       await ClipboardStore().addItem(item);
+      _newItems.add(item);
     } catch (_) {}
   }
 
