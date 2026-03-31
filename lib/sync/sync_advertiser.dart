@@ -3,6 +3,7 @@ import 'dart:convert';
 import 'dart:io';
 import 'dart:typed_data';
 import 'package:flutter/foundation.dart';
+import 'sync_discovery.dart';
 
 const _serviceType = '_clipmgr._tcp';
 const _mdnsTtlSeconds = 120;
@@ -18,11 +19,15 @@ const _resourceRecordTypeService = 33;
 class SyncAdvertiser {
   RawDatagramSocket? _socket;
   Timer? _announceTimer;
+  final StreamController<DiscoveredPeer> _peerCtrl =
+      StreamController<DiscoveredPeer>.broadcast();
+  Stream<DiscoveredPeer> get peers => _peerCtrl.stream;
 
   late String _instanceName;
   late String _serviceTypeFqdn;
   late String _hostName;
   late int _serverPort;
+  late String _localId;
   final List<InternetAddress> _ipv4Addresses = [];
 
   Future<void> start({
@@ -30,6 +35,7 @@ class SyncAdvertiser {
     required String localName,
     required int serverPort,
   }) async {
+    _localId = localId;
     _serviceTypeFqdn = '$_serviceType.local';
     _instanceName = '$localId.$_serviceTypeFqdn';
     _hostName = '${_sanitizeHostLabel(localName)}.local';
@@ -85,10 +91,12 @@ class SyncAdvertiser {
       if (event != RawSocketEvent.read) return;
       final datagram = _socket!.receive();
       if (datagram == null) return;
+      _handleMdnsResponse(datagram);
       _handleQuery(datagram);
     });
 
     _sendAnnouncement();
+    _sendDiscoveryQuery();
     _log('announcement sent');
     _announceTimer?.cancel();
     _announceTimer = Timer.periodic(
@@ -96,6 +104,7 @@ class SyncAdvertiser {
       (_) {
         _log('periodic announcement');
         _sendAnnouncement();
+        _sendDiscoveryQuery();
       },
     );
   }
@@ -256,6 +265,26 @@ class SyncAdvertiser {
     );
   }
 
+  void _sendDiscoveryQuery() {
+    if (_socket == null) return;
+    final builder = BytesBuilder();
+    final header = ByteData(12)
+      ..setUint16(0, 0)
+      ..setUint16(2, 0)
+      ..setUint16(4, 1)
+      ..setUint16(6, 0)
+      ..setUint16(8, 0)
+      ..setUint16(10, 0);
+    builder.add(header.buffer.asUint8List());
+    builder.add(_encodeDnsName(_serviceTypeFqdn));
+    final question = ByteData(4)
+      ..setUint16(0, _resourceRecordTypeServerPointer)
+      ..setUint16(2, _resourceRecordClassInternet);
+    builder.add(question.buffer.asUint8List());
+    _socket!.send(builder.toBytes(), _mDnsAddressIPv4, _mDnsPort);
+    _log('sent PTR discovery query for $_serviceTypeFqdn');
+  }
+
   void _sendResponse({
     required List<_DnsRecord> answers,
     required List<_DnsRecord> additionals,
@@ -265,6 +294,69 @@ class SyncAdvertiser {
     if (_socket == null) return;
     final packet = _buildDnsResponse(answers, additionals);
     _socket!.send(packet, destination, port);
+  }
+
+  void _handleMdnsResponse(Datagram datagram) {
+    final packet = _decodeMdnsPacket(datagram.data);
+    if (packet == null) return;
+    if (!packet.isResponse || packet.answers.isEmpty) return;
+
+    final ptrTargets = <String>{};
+    final srvRecords = <String, _SrvRecordData>{};
+    final aRecords = <String, InternetAddress>{};
+
+    for (final answer in packet.answers) {
+      switch (answer.type) {
+        case _resourceRecordTypeServerPointer:
+          if (answer.name.toLowerCase() != _serviceTypeFqdn) continue;
+          final target = _readDnsName(
+            packet.rawData,
+            packet.byteData,
+            answer.dataOffset,
+          )?.name;
+          if (target != null) ptrTargets.add(target);
+          break;
+        case _resourceRecordTypeService:
+          if (answer.dataLength < 6) continue;
+          final port = packet.byteData.getUint16(answer.dataOffset + 4);
+          final target = _readDnsName(
+            packet.rawData,
+            packet.byteData,
+            answer.dataOffset + 6,
+          )?.name;
+          if (target != null) {
+            srvRecords[answer.name.toLowerCase()] =
+                _SrvRecordData(target: target, port: port);
+          }
+          break;
+        case _resourceRecordTypeAddressIPv4:
+          if (answer.dataLength != 4) continue;
+          aRecords[answer.name.toLowerCase()] = InternetAddress.fromRawAddress(
+            packet.rawData.sublist(answer.dataOffset, answer.dataOffset + 4),
+            type: InternetAddressType.IPv4,
+          );
+          break;
+      }
+    }
+
+    for (final instanceName in ptrTargets) {
+      final id = _extractInstanceId(instanceName);
+      if (id == null || id == _localId) continue;
+      final srv = srvRecords[instanceName.toLowerCase()];
+      final ip = srv == null
+          ? null
+          : aRecords[srv.target.toLowerCase()] ?? datagram.address;
+      if (srv == null || ip == null || !_isPrivateLanAddress(ip.address)) continue;
+
+      final peer = DiscoveredPeer(
+        id: id,
+        name: id,
+        host: ip.address,
+        port: srv.port,
+      );
+      _log('mDNS peer discovered id=${peer.id} host=${peer.host} port=${peer.port}');
+      _peerCtrl.add(peer);
+    }
   }
 
   Uint8List _buildDnsResponse(
@@ -403,6 +495,65 @@ class SyncAdvertiser {
     );
   }
 
+  _DecodedDnsPacket? _decodeMdnsPacket(List<int> packet) {
+    if (packet.length < 12) return null;
+    final data = packet is Uint8List ? packet : Uint8List.fromList(packet);
+    final byteData = ByteData.view(data.buffer);
+    final flags = byteData.getUint16(2);
+    final questionCount = byteData.getUint16(4);
+    final answerCount = byteData.getUint16(6);
+    final authorityCount = byteData.getUint16(8);
+    final additionalCount = byteData.getUint16(10);
+
+    var offset = 12;
+    for (var i = 0; i < questionCount; i++) {
+      final nameResult = _readDnsName(data, byteData, offset);
+      if (nameResult == null) return null;
+      offset += nameResult.bytesRead + 4;
+      if (offset > data.length) return null;
+    }
+
+    final answers = <_DecodedResourceRecord>[];
+    final recordCount = answerCount + authorityCount + additionalCount;
+    for (var i = 0; i < recordCount; i++) {
+      final nameResult = _readDnsName(data, byteData, offset);
+      if (nameResult == null) return null;
+      offset += nameResult.bytesRead;
+      if (offset + 10 > data.length) return null;
+
+      final type = byteData.getUint16(offset);
+      final recordClass = byteData.getUint16(offset + 2);
+      final ttl = byteData.getUint32(offset + 4);
+      final dataLength = byteData.getUint16(offset + 8);
+      final dataOffset = offset + 10;
+      offset = dataOffset + dataLength;
+      if (offset > data.length) return null;
+
+      answers.add(_DecodedResourceRecord(
+        name: nameResult.name,
+        type: type,
+        recordClass: recordClass,
+        ttl: ttl,
+        dataOffset: dataOffset,
+        dataLength: dataLength,
+      ));
+    }
+
+    return _DecodedDnsPacket(
+      rawData: data,
+      byteData: byteData,
+      isResponse: (flags & 0x8000) != 0,
+      answers: answers,
+    );
+  }
+
+  String? _extractInstanceId(String instanceName) {
+    final normalized = instanceName.toLowerCase();
+    final suffix = '.$_serviceTypeFqdn';
+    if (!normalized.endsWith(suffix)) return null;
+    return instanceName.substring(0, instanceName.length - suffix.length);
+  }
+
   _DnsNameReadResult? _readDnsName(
     Uint8List data,
     ByteData byteData,
@@ -455,6 +606,48 @@ class _DnsRecord {
   final int recordClass;
   final int ttl;
   final Uint8List data;
+}
+
+class _DecodedDnsPacket {
+  const _DecodedDnsPacket({
+    required this.rawData,
+    required this.byteData,
+    required this.isResponse,
+    required this.answers,
+  });
+
+  final Uint8List rawData;
+  final ByteData byteData;
+  final bool isResponse;
+  final List<_DecodedResourceRecord> answers;
+}
+
+class _DecodedResourceRecord {
+  const _DecodedResourceRecord({
+    required this.name,
+    required this.type,
+    required this.recordClass,
+    required this.ttl,
+    required this.dataOffset,
+    required this.dataLength,
+  });
+
+  final String name;
+  final int type;
+  final int recordClass;
+  final int ttl;
+  final int dataOffset;
+  final int dataLength;
+}
+
+class _SrvRecordData {
+  const _SrvRecordData({
+    required this.target,
+    required this.port,
+  });
+
+  final String target;
+  final int port;
 }
 
 class _AdvertiseAddressCandidate {

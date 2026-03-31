@@ -40,6 +40,8 @@ class SyncService extends ChangeNotifier {
   final List<DiscoveredPeer> _discoveredPeers = [];
   List<DiscoveredPeer> get discoveredPeers => List.unmodifiable(_discoveredPeers);
   StreamSubscription<ClipboardItem>? _clipboardSub;
+  StreamSubscription<DiscoveredPeer>? _mdnsPeerSub;
+  StreamSubscription<DiscoveredPeer>? _broadcastPeerSub;
 
   bool isPeerOnline(String peerId) => _connections[peerId]?.isConnected == true;
 
@@ -74,29 +76,32 @@ class SyncService extends ChangeNotifier {
       localName: _deviceName(),
       serverPort: _server!.port,
     );
+    await _mdnsPeerSub?.cancel();
+    _mdnsPeerSub = _advertiser.peers.listen(_registerDiscoveredPeer);
 
     await _discovery.start(
       localId: settings.syncLocalDeviceId,
       localName: _deviceName(),
       serverPort: _server!.port,
     );
-    _discovery.peers.listen((peer) {
-      if (!_discoveredPeers.any((p) => p.id == peer.id)) {
-        _discoveredPeers.add(peer);
-        notifyListeners();
-      }
-    });
+    await _broadcastPeerSub?.cancel();
+    _broadcastPeerSub = _discovery.peers.listen(_registerDiscoveredPeer);
   }
 
   Future<void> stop() async {
     await _clipboardSub?.cancel();
     _clipboardSub = null;
+    await _mdnsPeerSub?.cancel();
+    _mdnsPeerSub = null;
+    await _broadcastPeerSub?.cancel();
+    _broadcastPeerSub = null;
     await _advertiser.stop();
     await _discovery.stop();
     for (final conn in _connections.values) {
       await conn.close();
     }
     _connections.clear();
+    _discoveredPeers.clear();
     await _server?.close();
     _server = null;
   }
@@ -365,6 +370,16 @@ class SyncService extends ChangeNotifier {
 
   String _deviceName() {
     return Platform.localHostname;
+  }
+
+  void _registerDiscoveredPeer(DiscoveredPeer peer) {
+    final existingIndex = _discoveredPeers.indexWhere((p) => p.id == peer.id);
+    if (existingIndex >= 0) {
+      _discoveredPeers[existingIndex] = peer;
+    } else {
+      _discoveredPeers.add(peer);
+    }
+    notifyListeners();
   }
 
   void _setupClipboardSync() {

@@ -2,12 +2,9 @@ import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 import 'package:flutter/foundation.dart';
-import 'package:multicast_dns/multicast_dns.dart';
 
-const _serviceType = '_clipmgr._tcp';
 const _broadcastPort = 44561;
 const _broadcastSignature = 'clipmgr-sync-v1';
-const _serviceTypeFqdn = '$_serviceType.local';
 
 class DiscoveredPeer {
   final String id;
@@ -18,116 +15,22 @@ class DiscoveredPeer {
 }
 
 class SyncDiscovery {
-  MDnsClient? _client;
-  StreamSubscription? _sub;
   RawDatagramSocket? _broadcastSocket;
   Timer? _announceTimer;
   final _peerCtrl = StreamController<DiscoveredPeer>.broadcast();
   Stream<DiscoveredPeer> get peers => _peerCtrl.stream;
-
-  Future<RawDatagramSocket> _bindSocket(
-    dynamic host,
-    int port, {
-    bool reuseAddress = true,
-    bool reusePort = true,
-    int ttl = 255,
-  }) {
-    return RawDatagramSocket.bind(
-      host,
-      port,
-      reuseAddress: reuseAddress,
-      // Windows does not support reusePort for multicast_dns' default setup.
-      reusePort: Platform.isWindows ? false : reusePort,
-      ttl: ttl,
-    );
-  }
-
-  Future<Iterable<NetworkInterface>> _interfacesFactory(
-    InternetAddressType type,
-  ) async {
-    final interfaces = await NetworkInterface.list(
-      includeLinkLocal: true,
-      includeLoopback: false,
-      type: type,
-    );
-
-    return interfaces.where((interface) {
-      if (interface.addresses.isEmpty) return false;
-      return interface.addresses.any((address) => address.type == type);
-    });
-  }
 
   Future<void> start({
     required String localId,
     required String localName,
     required int serverPort,
   }) async {
-    _log('start localId=$localId localName=$localName serverPort=$serverPort');
+    _log('start broadcast fallback localId=$localId localName=$localName serverPort=$serverPort');
     await _startBroadcastDiscovery(
       localId: localId,
       localName: localName,
       serverPort: serverPort,
     );
-
-    _client = MDnsClient(rawDatagramSocketFactory: _bindSocket);
-    try {
-      await _client!.start(interfacesFactory: _interfacesFactory);
-    } on SocketException {
-      _log('mDNS client failed to start: SocketException');
-      _client = null;
-      return;
-    } on OSError {
-      _log('mDNS client failed to start: OSError');
-      _client = null;
-      return;
-    } catch (_) {
-      _log('mDNS client failed to start: unknown error');
-      _client = null;
-      return;
-    }
-
-    // Discover peers
-    _sub = _client!
-        .lookup<PtrResourceRecord>(ResourceRecordQuery.serverPointer(_serviceType))
-        .listen((ptr) async {
-      final discoveredId = _extractId(ptr.domainName);
-      if (discoveredId == null || discoveredId == localId) return;
-
-      await for (final srv in _client!
-          .lookup<SrvResourceRecord>(ResourceRecordQuery.service(ptr.domainName))
-          .timeout(const Duration(seconds: 2), onTimeout: (_) {})) {
-        final target = srv.target;
-        final port = srv.port;
-        // Resolve IP
-        await for (final ip in _client!
-            .lookup<IPAddressResourceRecord>(ResourceRecordQuery.addressIPv4(target))
-            .timeout(const Duration(seconds: 2), onTimeout: (_) {})) {
-          final name = discoveredId;
-          _peerCtrl.add(DiscoveredPeer(
-            id: discoveredId,
-            name: name,
-            host: ip.address.address,
-            port: port,
-          ));
-          _log('mDNS peer discovered id=$discoveredId host=${ip.address.address} port=$port');
-          break;
-        }
-        break;
-      }
-    });
-  }
-
-  String? _extractId(String domainName) {
-    final normalized = domainName.toLowerCase();
-    final suffix = '.$_serviceTypeFqdn';
-    if (normalized.endsWith(suffix)) {
-      return domainName.substring(0, domainName.length - suffix.length);
-    }
-    final fallbackSuffix = '.$_serviceType';
-    if (normalized.endsWith(fallbackSuffix)) {
-      return domainName.substring(0, domainName.length - fallbackSuffix.length);
-    }
-    return null;
   }
 
   Future<void> _startBroadcastDiscovery({
@@ -196,14 +99,10 @@ class SyncDiscovery {
   }
 
   Future<void> stop() async {
-    await _sub?.cancel();
-    _sub = null;
     _announceTimer?.cancel();
     _announceTimer = null;
     _broadcastSocket?.close();
     _broadcastSocket = null;
-    _client?.stop();
-    _client = null;
   }
 
   void _log(String message) {
