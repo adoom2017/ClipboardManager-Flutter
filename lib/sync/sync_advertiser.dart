@@ -2,6 +2,7 @@ import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 import 'dart:typed_data';
+import 'package:flutter/foundation.dart';
 
 const _serviceType = '_clipmgr._tcp';
 const _mdnsTtlSeconds = 120;
@@ -38,7 +39,12 @@ class SyncAdvertiser {
       ..clear()
       ..addAll(await _discoverLocalIpv4Addresses());
 
+    _log('localId=$localId localName=$localName');
+    _log('service=$_instanceName host=$_hostName port=$serverPort');
+    _log('selectedIPv4=${_ipv4Addresses.map((e) => e.address).join(", ")}');
+
     if (_ipv4Addresses.isEmpty) {
+      _log('no eligible private IPv4 address found; mDNS advertisement disabled');
       return;
     }
 
@@ -53,6 +59,7 @@ class SyncAdvertiser {
     } on SocketException {
       // If another mDNS responder already owns the port we keep the app usable
       // and fall back to the UDP broadcast discovery path.
+      _log('failed to bind UDP/5353; falling back to broadcast discovery only');
       return;
     }
 
@@ -82,11 +89,21 @@ class SyncAdvertiser {
     });
 
     _sendAnnouncement();
+    _log('announcement sent');
     _announceTimer?.cancel();
     _announceTimer = Timer.periodic(
       const Duration(seconds: 10),
-      (_) => _sendAnnouncement(),
+      (_) {
+        _log('periodic announcement');
+        _sendAnnouncement();
+      },
     );
+  }
+
+  void _log(String message) {
+    if (kDebugMode) {
+      debugPrint('[SyncAdvertiser] $message');
+    }
   }
 
   Future<void> stop() async {
@@ -104,17 +121,78 @@ class SyncAdvertiser {
       type: InternetAddressType.IPv4,
     );
 
-    final addresses = <InternetAddress>[];
+    final candidates = <_AdvertiseAddressCandidate>[];
     for (final interface in interfaces) {
       for (final address in interface.addresses) {
-        if (address.type == InternetAddressType.IPv4 &&
-            !address.isLoopback &&
-            !address.address.startsWith('169.254.')) {
-          addresses.add(address);
-        }
+        if (address.type != InternetAddressType.IPv4 || address.isLoopback) continue;
+        if (!_isPrivateLanAddress(address.address)) continue;
+        if (_looksVirtualInterface(interface.name)) continue;
+
+        candidates.add(
+          _AdvertiseAddressCandidate(
+            interfaceName: interface.name,
+            address: address,
+          ),
+        );
       }
     }
-    return addresses;
+
+    if (candidates.isEmpty) return const [];
+
+    candidates.sort((a, b) {
+      final scoreCompare = _interfacePriority(b.interfaceName)
+          .compareTo(_interfacePriority(a.interfaceName));
+      if (scoreCompare != 0) return scoreCompare;
+      return a.address.address.compareTo(b.address.address);
+    });
+
+    final selected = candidates.first;
+    return [selected.address];
+  }
+
+  bool _isPrivateLanAddress(String address) {
+    if (address.startsWith('10.')) return true;
+    if (address.startsWith('192.168.')) return true;
+    if (!address.startsWith('172.')) return false;
+
+    final parts = address.split('.');
+    if (parts.length < 2) return false;
+    final secondOctet = int.tryParse(parts[1]);
+    return secondOctet != null && secondOctet >= 16 && secondOctet <= 31;
+  }
+
+  bool _looksVirtualInterface(String name) {
+    final normalized = name.toLowerCase();
+    const blockedTokens = [
+      'virtual',
+      'vmware',
+      'hyper-v',
+      'hyperv',
+      'wsl',
+      'docker',
+      'vbox',
+      'vethernet',
+      'vpn',
+      'tun',
+      'tap',
+      'tailscale',
+      'zerotier',
+      'utun',
+      'bridge',
+      'loopback',
+    ];
+    return blockedTokens.any(normalized.contains);
+  }
+
+  int _interfacePriority(String name) {
+    final normalized = name.toLowerCase();
+    if (normalized.contains('wi-fi') || normalized.contains('wifi') || normalized.contains('wlan')) {
+      return 3;
+    }
+    if (normalized.contains('ethernet') || normalized.startsWith('en')) {
+      return 2;
+    }
+    return 1;
   }
 
   String _sanitizeHostLabel(String input) {
@@ -377,6 +455,16 @@ class _DnsRecord {
   final int recordClass;
   final int ttl;
   final Uint8List data;
+}
+
+class _AdvertiseAddressCandidate {
+  const _AdvertiseAddressCandidate({
+    required this.interfaceName,
+    required this.address,
+  });
+
+  final String interfaceName;
+  final InternetAddress address;
 }
 
 class _DnsQuery {

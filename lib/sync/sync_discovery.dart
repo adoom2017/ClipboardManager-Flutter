@@ -1,6 +1,7 @@
 import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
+import 'package:flutter/foundation.dart';
 import 'package:multicast_dns/multicast_dns.dart';
 
 const _serviceType = '_clipmgr._tcp';
@@ -61,6 +62,7 @@ class SyncDiscovery {
     required String localName,
     required int serverPort,
   }) async {
+    _log('start localId=$localId localName=$localName serverPort=$serverPort');
     await _startBroadcastDiscovery(
       localId: localId,
       localName: localName,
@@ -71,12 +73,15 @@ class SyncDiscovery {
     try {
       await _client!.start(interfacesFactory: _interfacesFactory);
     } on SocketException {
+      _log('mDNS client failed to start: SocketException');
       _client = null;
       return;
     } on OSError {
+      _log('mDNS client failed to start: OSError');
       _client = null;
       return;
     } catch (_) {
+      _log('mDNS client failed to start: unknown error');
       _client = null;
       return;
     }
@@ -104,6 +109,7 @@ class SyncDiscovery {
             host: ip.address.address,
             port: port,
           ));
+          _log('mDNS peer discovered id=$discoveredId host=${ip.address.address} port=$port');
           break;
         }
         break;
@@ -129,6 +135,7 @@ class SyncDiscovery {
     required String localName,
     required int serverPort,
   }) async {
+    _log('starting UDP broadcast discovery on port=$_broadcastPort');
     _broadcastSocket = await RawDatagramSocket.bind(
       InternetAddress.anyIPv4,
       _broadcastPort,
@@ -159,6 +166,7 @@ class SyncDiscovery {
         InternetAddress('255.255.255.255'),
         _broadcastPort,
       );
+      _log('broadcast announce id=$localId name=$localName port=$serverPort');
     }
 
     announce();
@@ -181,6 +189,7 @@ class SyncDiscovery {
         host: datagram.address.address,
         port: port,
       ));
+      _log('broadcast peer discovered id=$id name=$name host=${datagram.address.address} port=$port');
     } catch (_) {
       // Ignore malformed broadcast packets from unrelated applications.
     }
@@ -195,5 +204,11 @@ class SyncDiscovery {
     _broadcastSocket = null;
     _client?.stop();
     _client = null;
+  }
+
+  void _log(String message) {
+    if (kDebugMode) {
+      debugPrint('[SyncDiscovery] $message');
+    }
   }
 }

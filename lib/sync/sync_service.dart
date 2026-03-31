@@ -64,6 +64,7 @@ class SyncService extends ChangeNotifier {
   Future<void> start() async {
     final settings = SettingsStore();
     _server = await ServerSocket.bind(InternetAddress.anyIPv4, 0);
+    _log('TCP server listening on ${_server!.address.address}:${_server!.port}');
     _server!.listen(_onIncomingConnection);
     _setupClipboardSync();
     await _advertiser.start(
@@ -102,6 +103,7 @@ class SyncService extends ChangeNotifier {
 
   Future<void> connectTo(DiscoveredPeer peer) async {
     final settings = SettingsStore();
+    _log('connectTo peerId=${peer.id} host=${peer.host} port=${peer.port}');
     final socket = await Socket.connect(peer.host, peer.port);
     final conn = SyncConnection(socket, peer.id);
     _connections[peer.id] = conn;
@@ -115,9 +117,11 @@ class SyncService extends ChangeNotifier {
       senderId: settings.syncLocalDeviceId,
       senderName: _deviceName(),
     ));
+    _log('sent hello to peerId=${peer.id}');
 
     if (existing != null) {
       // Already paired - proceed to sync
+      _log('peerId=${peer.id} already paired, sending initial sync');
       await _syncItems(conn, SyncCrypto.keyFromBase64(existing.keyBase64));
     } else {
       // Start pairing. The remote side will display a PIN that the local user enters later.
@@ -131,6 +135,7 @@ class SyncService extends ChangeNotifier {
         senderId: settings.syncLocalDeviceId,
         senderName: _deviceName(),
       ));
+      _log('sent pairingRequest to peerId=${peer.id}');
     }
 
     conn.messages.listen((msg) => _handleMessage(msg, conn));
@@ -139,6 +144,7 @@ class SyncService extends ChangeNotifier {
   // ─── Incoming connections ─────────────────────────────────────────────────
 
   void _onIncomingConnection(Socket socket) {
+    _log('incoming TCP connection from ${socket.remoteAddress.address}:${socket.remotePort}');
     final conn = SyncConnection(socket, '');
     conn.messages.listen((msg) => _handleMessage(msg, conn));
   }
@@ -146,9 +152,11 @@ class SyncService extends ChangeNotifier {
   // ─── Message handling ──────────────────────────────────────────────────────
 
   void _handleMessage(SyncMessage msg, SyncConnection conn) async {
+    _log('received type=${msg.type.name} senderID=${msg.senderId} senderName=${msg.senderName}');
     switch (msg.type) {
       case SyncMessageType.hello:
         _connections[msg.senderId] = conn;
+        _log('registered connection for senderID=${msg.senderId}');
         break;
 
       case SyncMessageType.pairingRequest:
@@ -160,17 +168,20 @@ class SyncService extends ChangeNotifier {
           pin: pin,
           initiatedByLocal: false,
         );
+        _log('pairingRequest from ${msg.senderId}, generated PIN=$pin');
         break;
 
       case SyncMessageType.pairingPin:
         final pending = _pendingPairings[msg.senderId];
         if (pending == null || pending.initiatedByLocal || pending.pin == null) {
+          _log('unexpected pairingPin from ${msg.senderId}, rejecting');
           await _sendPairingReject(conn);
           break;
         }
 
         final pin = _decodePlainPayload(msg.plainPayload);
         if (pin == null || pin != pending.pin) {
+          _log('pairingPin mismatch from ${msg.senderId}: received=$pin expected=${pending.pin}');
           await _sendPairingReject(conn);
           break;
         }
@@ -193,6 +204,7 @@ class SyncService extends ChangeNotifier {
           senderName: _deviceName(),
           plainPayload: _encodePlainPayload(pin),
         ));
+        _log('pairing completed as receiver for ${msg.senderId}');
         notifyListeners();
 
         if (SettingsStore().autoSync) {
@@ -215,12 +227,16 @@ class SyncService extends ChangeNotifier {
             keyBase64: await SyncCrypto.keyToBase64(key),
           ));
           notifyListeners();
+          _log('pairing completed as initiator for ${msg.senderId}');
           await _syncItems(conn, key);
+        } else {
+          _log('ignored pairingAck from ${msg.senderId}; pending=${pending != null} pinMatch=${pending?.pin == pin}');
         }
         break;
 
       case SyncMessageType.pairingReject:
         _pendingPairings.remove(msg.senderId);
+        _log('pairing rejected by ${msg.senderId}');
         await conn.close();
         _connections.remove(msg.senderId);
         break;
@@ -235,11 +251,14 @@ class SyncService extends ChangeNotifier {
           final plain = await SyncCrypto.decrypt(encrypted, key);
           final payload = jsonDecode(plain) as Map<String, dynamic>;
           final list = (payload['items'] as List<dynamic>? ?? const []);
+          _log('received ${list.length} synced item(s) from ${msg.senderId}');
           for (final raw in list) {
             final item = _syncItemFromJson(raw as Map<String, dynamic>);
             await ClipboardStore().addItem(item);
           }
-        } catch (_) {}
+        } catch (error) {
+          _log('failed to decrypt/apply items from ${msg.senderId}: $error');
+        }
         break;
 
       case SyncMessageType.ping:
@@ -276,6 +295,7 @@ class SyncService extends ChangeNotifier {
     if (pending == null || conn == null || !pending.initiatedByLocal) return;
 
     pending.pin = pin;
+    _log('submitting pairingPin to $peerId value=$pin');
     await conn.send(SyncMessage(
       type: SyncMessageType.pairingPin,
       senderId: SettingsStore().syncLocalDeviceId,
@@ -305,6 +325,7 @@ class SyncService extends ChangeNotifier {
       'items': textItems.map((i) => _syncItemToJson(i)).toList(),
     });
     final encrypted = await SyncCrypto.encrypt(payload, key);
+    _log('sending full sync with ${textItems.length} item(s)');
     await conn.send(SyncMessage(
       type: SyncMessageType.items,
       senderId: SettingsStore().syncLocalDeviceId,
@@ -349,6 +370,7 @@ class SyncService extends ChangeNotifier {
       'items': [_syncItemToJson(item)],
     });
     final encrypted = await SyncCrypto.encrypt(payload, key);
+    _log('auto-syncing single item id=${item.id}');
     await conn.send(SyncMessage(
       type: SyncMessageType.items,
       senderId: SettingsStore().syncLocalDeviceId,
@@ -408,6 +430,12 @@ class SyncService extends ChangeNotifier {
       return DateTime.tryParse(value)?.toUtc() ?? DateTime.now().toUtc();
     }
     return DateTime.now().toUtc();
+  }
+
+  void _log(String message) {
+    if (kDebugMode) {
+      debugPrint('[SyncService] $message');
+    }
   }
 }
 
