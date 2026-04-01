@@ -14,7 +14,12 @@ class DiscoveredPeer {
   final String name;
   final String host;
   final int port;
-  DiscoveredPeer({required this.id, required this.name, required this.host, required this.port});
+  DiscoveredPeer({
+    required this.id,
+    required this.name,
+    required this.host,
+    required this.port,
+  });
 }
 
 class SyncDiscovery {
@@ -23,6 +28,7 @@ class SyncDiscovery {
   SyncCadenceScheduler? _broadcastCadence;
   SyncCadenceScheduler? _mdnsCadence;
   MDnsClient? _mdnsClient;
+  final Set<String> _localAddresses = {};
   final _peerCtrl = StreamController<DiscoveredPeer>.broadcast();
   Stream<DiscoveredPeer> get peers => _peerCtrl.stream;
   InternetAddress? _localAddress;
@@ -32,7 +38,12 @@ class SyncDiscovery {
     required String localName,
     required int serverPort,
   }) async {
-    _logInfo('start broadcast fallback localId=$localId localName=$localName serverPort=$serverPort');
+    _localAddresses
+      ..clear()
+      ..addAll(await _discoverLocalIpv4Addresses());
+    _logInfo(
+      'start broadcast fallback localId=$localId localName=$localName serverPort=$serverPort',
+    );
     await _startMdnsDiscovery(localId);
     await _startBroadcastDiscovery(
       localId: localId,
@@ -57,44 +68,63 @@ class SyncDiscovery {
 
     Future<void> queryOnce() async {
       try {
-        await for (final PtrResourceRecord ptr in client.lookup<PtrResourceRecord>(
-          ResourceRecordQuery.serverPointer('$_serviceType.local'),
-        )) {
+        await for (final PtrResourceRecord ptr
+            in client.lookup<PtrResourceRecord>(
+              ResourceRecordQuery.serverPointer('$_serviceType.local'),
+            )) {
           _logDebug('mDNS PTR discovered domainName=${ptr.domainName}');
           final id = _extractPeerId(ptr.domainName);
           if (id == null) {
-            _logDebug('mDNS PTR ignored because peer id could not be extracted domainName=${ptr.domainName}');
+            _logDebug(
+              'mDNS PTR ignored because peer id could not be extracted domainName=${ptr.domainName}',
+            );
             continue;
           }
           if (id == localId) {
-            _logDebug('mDNS PTR ignored because it is the local service id=$id');
+            _logDebug(
+              'mDNS PTR ignored because it is the local service id=$id',
+            );
             continue;
           }
 
           final serviceName = _stripTrailingDot(ptr.domainName);
           final srvRecords = await client
-              .lookup<SrvResourceRecord>(ResourceRecordQuery.service(serviceName))
+              .lookup<SrvResourceRecord>(
+                ResourceRecordQuery.service(serviceName),
+              )
               .toList();
           if (srvRecords.isEmpty) {
-            _logDebug('mDNS SRV lookup returned no results id=$id serviceName=$serviceName');
+            _logDebug(
+              'mDNS SRV lookup returned no results id=$id serviceName=$serviceName',
+            );
             continue;
           }
 
           for (final srv in srvRecords) {
-            _logDebug('mDNS SRV discovered id=$id target=${srv.target} port=${srv.port}');
+            _logDebug(
+              'mDNS SRV discovered id=$id target=${srv.target} port=${srv.port}',
+            );
             final addressName = _stripTrailingDot(srv.target);
             final ipRecords = await client
-                .lookup<IPAddressResourceRecord>(ResourceRecordQuery.addressIPv4(addressName))
+                .lookup<IPAddressResourceRecord>(
+                  ResourceRecordQuery.addressIPv4(addressName),
+                )
                 .toList();
             if (ipRecords.isEmpty) {
-              _logDebug('mDNS A lookup returned no results id=$id target=$addressName');
+              _logDebug(
+                'mDNS A lookup returned no results id=$id target=$addressName',
+              );
               continue;
             }
 
             for (final ip in ipRecords) {
-              _logDebug('mDNS A discovered id=$id target=${srv.target} address=${ip.address.address}');
+              _logDebug(
+                'mDNS A discovered id=$id target=${srv.target} address=${ip.address.address}',
+              );
               if (!_isPrivateLanAddress(ip.address.address)) {
-                _logDebug('mDNS A ignored because address is not private LAN id=$id address=${ip.address.address}');
+                _logDebug(
+                  'mDNS A ignored because address is not private LAN id=$id address=${ip.address.address}',
+                );
                 continue;
               }
               final peer = DiscoveredPeer(
@@ -103,7 +133,9 @@ class SyncDiscovery {
                 host: ip.address.address,
                 port: srv.port,
               );
-              _logDebug('mDNS peer discovered id=${peer.id} host=${peer.host} port=${peer.port}');
+              _logDebug(
+                'mDNS peer discovered id=${peer.id} host=${peer.host} port=${peer.port}',
+              );
               _peerCtrl.add(peer);
             }
           }
@@ -171,20 +203,24 @@ class SyncDiscovery {
     );
 
     void announce() {
-      final payload = utf8.encode(jsonEncode({
-        'signature': _broadcastSignature,
-        'id': localId,
-        'name': localName,
-        'port': serverPort,
-        if (_localAddress != null) 'host': _localAddress!.address,
-      }));
+      final payload = utf8.encode(
+        jsonEncode({
+          'signature': _broadcastSignature,
+          'id': localId,
+          'name': localName,
+          'port': serverPort,
+          if (_localAddress != null) 'host': _localAddress!.address,
+        }),
+      );
       try {
         _broadcastSendSocket!.send(
           payload,
           InternetAddress('255.255.255.255'),
           _broadcastPort,
         );
-        _logDebug('broadcast announce id=$localId name=$localName port=$serverPort host=${_localAddress?.address ?? "packet-source"}');
+        _logDebug(
+          'broadcast announce id=$localId name=$localName port=$serverPort host=${_localAddress?.address ?? "packet-source"}',
+        );
       } on SocketException catch (error) {
         _logWarn('broadcast announce failed error=$error');
       }
@@ -206,7 +242,9 @@ class SyncDiscovery {
 
   void _handleBroadcastDatagram(Datagram datagram, String localId) {
     try {
-      final payload = jsonDecode(utf8.decode(datagram.data)) as Map<String, dynamic>;
+      if (_isLocalAddress(datagram.address.address)) return;
+      final payload =
+          jsonDecode(utf8.decode(datagram.data)) as Map<String, dynamic>;
       if (payload['signature'] != _broadcastSignature) return;
 
       final id = payload['id'] as String?;
@@ -215,13 +253,10 @@ class SyncDiscovery {
       if (id == null || name == null || port == null || id == localId) return;
       final host = (payload['host'] as String?) ?? datagram.address.address;
 
-      _peerCtrl.add(DiscoveredPeer(
-        id: id,
-        name: name,
-        host: host,
-        port: port,
-      ));
-      _logDebug('broadcast peer discovered id=$id name=$name host=$host sender=${datagram.address.address} port=$port');
+      _peerCtrl.add(DiscoveredPeer(id: id, name: name, host: host, port: port));
+      _logDebug(
+        'broadcast peer discovered id=$id name=$name host=$host sender=${datagram.address.address} port=$port',
+      );
     } catch (_) {
       // Ignore malformed broadcast packets from unrelated applications.
     }
@@ -239,6 +274,7 @@ class SyncDiscovery {
     _broadcastSendSocket?.close();
     _broadcastSendSocket = null;
     _localAddress = null;
+    _localAddresses.clear();
   }
 
   void boostDiscovery() {
@@ -262,37 +298,25 @@ class SyncDiscovery {
     return _stripTrailingDot(name).toLowerCase();
   }
 
-  Future<InternetAddress?> _discoverPreferredLocalIpv4() async {
+  Future<Set<String>> _discoverLocalIpv4Addresses() async {
     final interfaces = await NetworkInterface.list(
       includeLinkLocal: true,
       includeLoopback: false,
       type: InternetAddressType.IPv4,
     );
 
-    final candidates = <_BroadcastAddressCandidate>[];
+    final addresses = <String>{};
     for (final interface in interfaces) {
       for (final address in interface.addresses) {
-        if (address.type != InternetAddressType.IPv4 || address.isLoopback) continue;
-        if (!_isPrivateLanAddress(address.address)) continue;
-        if (_looksVirtualInterface(interface.name)) continue;
-        candidates.add(_BroadcastAddressCandidate(
-          interfaceName: interface.name,
-          address: address,
-        ));
+        if (address.type == InternetAddressType.IPv4 && !address.isLoopback) {
+          addresses.add(address.address);
+        }
       }
     }
-
-    if (candidates.isEmpty) return null;
-
-    candidates.sort((a, b) {
-      final scoreCompare =
-          _interfacePriority(b.interfaceName).compareTo(_interfacePriority(a.interfaceName));
-      if (scoreCompare != 0) return scoreCompare;
-      return a.address.address.compareTo(b.address.address);
-    });
-
-    return candidates.first.address;
+    return addresses;
   }
+
+  bool _isLocalAddress(String address) => _localAddresses.contains(address);
 
   bool _isPrivateLanAddress(String address) {
     if (address.startsWith('10.')) return true;
@@ -303,6 +327,31 @@ class SyncDiscovery {
     if (parts.length < 2) return false;
     final secondOctet = int.tryParse(parts[1]);
     return secondOctet != null && secondOctet >= 16 && secondOctet <= 31;
+  }
+
+  Future<InternetAddress?> _discoverPreferredLocalIpv4() async {
+    final interfaces = await NetworkInterface.list(
+      includeLinkLocal: true,
+      includeLoopback: false,
+      type: InternetAddressType.IPv4,
+    );
+
+    final candidates = <InternetAddress>[];
+    for (final interface in interfaces) {
+      if (_looksVirtualInterface(interface.name)) continue;
+      for (final address in interface.addresses) {
+        if (address.type != InternetAddressType.IPv4 || address.isLoopback) {
+          continue;
+        }
+        if (_isPrivateLanAddress(address.address)) {
+          candidates.add(address);
+        }
+      }
+    }
+
+    if (candidates.isEmpty) return null;
+    candidates.sort((a, b) => a.address.compareTo(b.address));
+    return candidates.first;
   }
 
   bool _looksVirtualInterface(String name) {
@@ -321,35 +370,17 @@ class SyncDiscovery {
       'tap',
       'tailscale',
       'zerotier',
-      'utun',
       'bridge',
       'loopback',
+      'meta',
     ];
     return blockedTokens.any(normalized.contains);
   }
 
-  int _interfacePriority(String name) {
-    final normalized = name.toLowerCase();
-    if (normalized.contains('wi-fi') || normalized.contains('wifi') || normalized.contains('wlan')) {
-      return 3;
-    }
-    if (normalized.contains('ethernet') || normalized.startsWith('en')) {
-      return 2;
-    }
-    return 1;
-  }
-
-  void _logDebug(String message) => AppLogger.instance.debug('SyncDiscovery', message);
-  void _logInfo(String message) => AppLogger.instance.info('SyncDiscovery', message);
-  void _logWarn(String message) => AppLogger.instance.warn('SyncDiscovery', message);
-}
-
-class _BroadcastAddressCandidate {
-  final String interfaceName;
-  final InternetAddress address;
-
-  _BroadcastAddressCandidate({
-    required this.interfaceName,
-    required this.address,
-  });
+  void _logDebug(String message) =>
+      AppLogger.instance.debug('SyncDiscovery', message);
+  void _logInfo(String message) =>
+      AppLogger.instance.info('SyncDiscovery', message);
+  void _logWarn(String message) =>
+      AppLogger.instance.warn('SyncDiscovery', message);
 }
