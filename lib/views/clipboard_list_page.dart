@@ -325,7 +325,7 @@ class _ClipboardItemTileState extends State<_ClipboardItemTile> {
     }
 
     if (peers.length == 1) {
-      await SyncService.instance.sendItemToPeer(item, peers.first);
+      await _sendItemToPeer(peers.first, item);
       return;
     }
 
@@ -336,10 +336,27 @@ class _ClipboardItemTileState extends State<_ClipboardItemTile> {
         peers: peers,
         onSelected: (peer) async {
           Navigator.pop(ctx);
-          await SyncService.instance.sendItemToPeer(item, peer);
+          await _sendItemToPeer(peer, item);
         },
       ),
     );
+  }
+
+  Future<void> _sendItemToPeer(dynamic peer, ClipboardItem item) async {
+    try {
+      await SyncService.instance.sendItemToPeer(item, peer as dynamic);
+    } catch (error) {
+      if (!mounted) return;
+      await showDialog<bool>(
+        context: context,
+        builder: (ctx) => _MacAlertDialog(
+          title: '同步失败',
+          message: '无法同步到 ${peer.name}。\n$error',
+          confirmLabel: '确定',
+          showCancel: false,
+        ),
+      );
+    }
   }
 }
 

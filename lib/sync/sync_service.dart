@@ -14,14 +14,19 @@ import 'sync_message.dart';
 class SyncService extends ChangeNotifier {
   static final SyncService instance = SyncService._();
   SyncService._();
+  static const Duration _peerExpiry = Duration(seconds: 45);
+  static const Duration _peerCleanupInterval = Duration(seconds: 5);
+  static const Duration _syncAckTimeout = Duration(seconds: 3);
 
   ServerSocket? _server;
   final SyncAdvertiser _advertiser = SyncAdvertiser();
   final SyncDiscovery _discovery = SyncDiscovery();
   final List<DiscoveredPeer> _discoveredPeers = [];
+  final Map<String, DateTime> _peerLastSeen = {};
   List<DiscoveredPeer> get discoveredPeers => List.unmodifiable(_discoveredPeers);
   StreamSubscription<DiscoveredPeer>? _mdnsPeerSub;
   StreamSubscription<DiscoveredPeer>? _broadcastPeerSub;
+  Timer? _peerExpiryTimer;
 
   Future<void> start() async {
     final settings = SettingsStore();
@@ -44,6 +49,8 @@ class SyncService extends ChangeNotifier {
     );
     await _broadcastPeerSub?.cancel();
     _broadcastPeerSub = _discovery.peers.listen(_registerDiscoveredPeer);
+    _peerExpiryTimer?.cancel();
+    _peerExpiryTimer = Timer.periodic(_peerCleanupInterval, (_) => _pruneExpiredPeers());
   }
 
   Future<void> stop() async {
@@ -53,7 +60,10 @@ class SyncService extends ChangeNotifier {
     _broadcastPeerSub = null;
     await _advertiser.stop();
     await _discovery.stop();
+    _peerExpiryTimer?.cancel();
+    _peerExpiryTimer = null;
     _discoveredPeers.clear();
+    _peerLastSeen.clear();
     await _server?.close();
     _server = null;
   }
@@ -62,17 +72,42 @@ class SyncService extends ChangeNotifier {
     if (item.contentType != ClipboardContentType.text) return;
     _logInfo('sendItemToPeer itemId=${item.id} peerId=${peer.id} host=${peer.host} port=${peer.port}');
     final socket = await Socket.connect(peer.host, peer.port);
-    final conn = SyncConnection(socket, peer.id);
-    conn.messages.listen((msg) => _handleMessage(msg, conn));
+    final ackCompleter = Completer<void>();
+    final conn = SyncConnection(
+      socket,
+      peer.id,
+      onClosed: () {
+        if (!ackCompleter.isCompleted) {
+          ackCompleter.completeError(
+            StateError('connection closed before acknowledgment'),
+          );
+        }
+      },
+    );
+    late final StreamSubscription<SyncMessage> subscription;
+    subscription = conn.messages.listen((msg) async {
+      if (msg.type == SyncMessageType.ack) {
+        _logInfo('sync acknowledged peerId=${peer.id}');
+        if (!ackCompleter.isCompleted) {
+          ackCompleter.complete();
+        }
+        return;
+      }
+      await _handleMessage(msg, conn);
+    });
 
-    await conn.send(SyncMessage(
-      type: SyncMessageType.hello,
-      senderId: SettingsStore().syncLocalDeviceId,
-      senderName: _deviceName(),
-    ));
-    await _sendItems(conn, [item]);
-    await Future<void>.delayed(const Duration(milliseconds: 200));
-    await conn.close();
+    try {
+      await conn.send(SyncMessage(
+        type: SyncMessageType.hello,
+        senderId: SettingsStore().syncLocalDeviceId,
+        senderName: _deviceName(),
+      ));
+      await _sendItems(conn, [item]);
+      await ackCompleter.future.timeout(_syncAckTimeout);
+    } finally {
+      await subscription.cancel();
+      await conn.close();
+    }
   }
 
   void _onIncomingConnection(Socket socket) {
@@ -81,7 +116,7 @@ class SyncService extends ChangeNotifier {
     conn.messages.listen((msg) => _handleMessage(msg, conn));
   }
 
-  void _handleMessage(SyncMessage msg, SyncConnection conn) async {
+  Future<void> _handleMessage(SyncMessage msg, SyncConnection conn) async {
     _logDebug('received type=${msg.type.name} senderID=${msg.senderId} senderName=${msg.senderName}');
     switch (msg.type) {
       case SyncMessageType.hello:
@@ -101,6 +136,11 @@ class SyncService extends ChangeNotifier {
             final item = _syncItemFromJson(raw as Map<String, dynamic>);
             await ClipboardStore().addItem(item);
           }
+          await conn.send(SyncMessage(
+            type: SyncMessageType.ack,
+            senderId: SettingsStore().syncLocalDeviceId,
+            senderName: _deviceName(),
+          ));
         } catch (error) {
           _logError('failed to apply items from ${msg.senderId}: $error');
         }
@@ -139,6 +179,7 @@ class SyncService extends ChangeNotifier {
   }
 
   void _registerDiscoveredPeer(DiscoveredPeer peer) {
+    _peerLastSeen[peer.id] = DateTime.now();
     final existingIndex = _discoveredPeers.indexWhere((candidate) => candidate.id == peer.id);
     if (existingIndex >= 0) {
       final previous = _discoveredPeers[existingIndex];
@@ -154,6 +195,22 @@ class SyncService extends ChangeNotifier {
     } else {
       _logInfo('add discovered peer id=${peer.id} host=${peer.host} port=${peer.port}');
       _discoveredPeers.add(peer);
+    }
+    notifyListeners();
+  }
+
+  void _pruneExpiredPeers() {
+    final cutoff = DateTime.now().subtract(_peerExpiry);
+    final expiredIds = _peerLastSeen.entries
+        .where((entry) => entry.value.isBefore(cutoff))
+        .map((entry) => entry.key)
+        .toList();
+    if (expiredIds.isEmpty) return;
+
+    for (final peerId in expiredIds) {
+      _peerLastSeen.remove(peerId);
+      _discoveredPeers.removeWhere((peer) => peer.id == peerId);
+      _logInfo('expired stale peer id=$peerId');
     }
     notifyListeners();
   }
