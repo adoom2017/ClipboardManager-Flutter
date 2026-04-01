@@ -2,10 +2,6 @@ import 'dart:convert';
 
 enum SyncMessageType {
   hello,
-  pairingRequest,
-  pairingPin,
-  pairingAck,
-  pairingReject,
   items,
   ack,
   ping,
@@ -17,14 +13,12 @@ class SyncMessage {
   final String senderId;
   final String senderName;
   final String? plainPayload;
-  final String? encryptedPayload; // base64(nonce + ciphertext + tag)
 
   SyncMessage({
     required this.type,
     required this.senderId,
     required this.senderName,
     this.plainPayload,
-    this.encryptedPayload,
   });
 
   Map<String, dynamic> toJson() => {
@@ -32,7 +26,6 @@ class SyncMessage {
         'senderID': senderId,
         'senderName': senderName,
         if (plainPayload != null) 'plainPayload': plainPayload,
-        if (encryptedPayload != null) 'encryptedPayload': encryptedPayload,
       };
 
   factory SyncMessage.fromJson(Map<String, dynamic> json) {
@@ -44,7 +37,6 @@ class SyncMessage {
       senderId: (json['senderID'] ?? json['senderId']) as String? ?? '',
       senderName: json['senderName'] as String? ?? '',
       plainPayload: json['plainPayload'] as String?,
-      encryptedPayload: json['encryptedPayload'] as String?,
     );
   }
 

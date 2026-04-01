@@ -1,12 +1,11 @@
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
+import 'dart:io';
 import 'package:hotkey_manager/hotkey_manager.dart';
 import 'package:provider/provider.dart';
 import 'package:tray_manager/tray_manager.dart';
 import 'package:window_manager/window_manager.dart';
-
-import 'package:win32/win32.dart' as win32;
 import 'core/auto_paste_service.dart';
 import 'core/clipboard_monitor.dart';
 import 'core/window_activation_service.dart';
@@ -38,7 +37,12 @@ void main() async {
     titleBarStyle: TitleBarStyle.hidden,
   );
   await windowManager.waitUntilReadyToShow(windowOptions, () async {
-    await windowManager.hide();
+    if (Platform.isWindows) {
+      await windowManager.hide();
+    } else {
+      await windowManager.show();
+      await windowManager.focus();
+    }
   });
 
   // Global hotkey: Alt+V
@@ -54,7 +58,7 @@ void main() async {
     } else {
       // Save the currently focused window before showing the picker so a
       // selection can paste back into the original target.
-      AutoPasteService.previousForegroundWindow = win32.GetForegroundWindow();
+      AutoPasteService.captureCurrentTarget();
       shellPageIndex.value = 0;
       await WindowActivationService.showInactive();
     }
@@ -136,22 +140,32 @@ class _MainShellState extends State<MainShell>
   }
 
   Future<void> _initTray() async {
-    await trayManager.setIcon('assets/icon.ico');
-    await trayManager.setToolTip('Clipboard Manager');
-    await trayManager.setContextMenu(Menu(items: [
-      MenuItem(key: 'show', label: '显示主窗口'),
-      MenuItem.separator(),
-      MenuItem(key: 'settings', label: '设置'),
-      MenuItem.separator(),
-      MenuItem(key: 'quit', label: '退出'),
-    ]));
+    if (Platform.isWindows) {
+      await trayManager.setIcon('assets/icon.ico');
+      await trayManager.setToolTip('Clipboard Manager');
+      await trayManager.setContextMenu(Menu(items: [
+        MenuItem(key: 'show', label: '显示主窗口'),
+        MenuItem.separator(),
+        MenuItem(key: 'settings', label: '设置'),
+        MenuItem.separator(),
+        MenuItem(key: 'quit', label: '退出'),
+      ]));
+    }
   }
 
   @override
-  void onTrayIconMouseDown() => trayManager.popUpContextMenu();
+  void onTrayIconMouseDown() {
+    if (Platform.isWindows) {
+      trayManager.popUpContextMenu();
+    }
+  }
 
   @override
-  void onTrayIconRightMouseDown() => trayManager.popUpContextMenu();
+  void onTrayIconRightMouseDown() {
+    if (Platform.isWindows) {
+      trayManager.popUpContextMenu();
+    }
+  }
 
   @override
   void onTrayMenuItemClick(MenuItem menuItem) async {
@@ -172,14 +186,26 @@ class _MainShellState extends State<MainShell>
   }
 
   @override
-  void onWindowBlur() => windowManager.hide();
+  void onWindowBlur() {
+    if (Platform.isWindows) {
+      windowManager.hide();
+    }
+  }
 
   @override
-  void onWindowClose() async => windowManager.hide();
+  void onWindowClose() async {
+    if (Platform.isWindows) {
+      await windowManager.hide();
+    } else {
+      await windowManager.destroy();
+    }
+  }
 
   void _quit() async {
     await hotKeyManager.unregisterAll();
-    await trayManager.destroy();
+    if (Platform.isWindows) {
+      await trayManager.destroy();
+    }
     ClipboardMonitor.instance.stop();
     await SyncService.instance.stop();
     await windowManager.destroy();

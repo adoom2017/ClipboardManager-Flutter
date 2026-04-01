@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import '../view_models/clipboard_list_view_model.dart';
 import '../models/clipboard_item.dart';
+import '../sync/sync_service.dart';
 import 'translation_dialog.dart';
 
 const _kAccent = Color(0xFF007AFF);
@@ -240,6 +241,13 @@ class _ClipboardItemTileState extends State<_ClipboardItemTile> {
                                         TranslationDialog(text: item.content),
                                   ),
                                 ),
+                              if (isText)
+                                _ActionIcon(
+                                  icon: Icons.sync_rounded,
+                                  color: _kTextSecondary,
+                                  tooltip: '同步',
+                                  onTap: () => _handleSync(item),
+                                ),
                               _ActionIcon(
                                 icon: item.isPinned
                                     ? Icons.push_pin
@@ -298,6 +306,40 @@ class _ClipboardItemTileState extends State<_ClipboardItemTile> {
             ? Icons.insert_drive_file_outlined
             : Icons.notes_outlined;
     return Icon(icon, size: 11, color: _kTextSecondary);
+  }
+
+  Future<void> _handleSync(ClipboardItem item) async {
+    final peers = SyncService.instance.discoveredPeers;
+    if (peers.isEmpty) {
+      if (!mounted) return;
+      await showDialog<bool>(
+        context: context,
+        builder: (ctx) => const _MacAlertDialog(
+          title: '未发现服务',
+          message: '当前未发现可同步的局域网设备。',
+          confirmLabel: '确定',
+          showCancel: false,
+        ),
+      );
+      return;
+    }
+
+    if (peers.length == 1) {
+      await SyncService.instance.sendItemToPeer(item, peers.first);
+      return;
+    }
+
+    if (!mounted) return;
+    await showDialog<void>(
+      context: context,
+      builder: (ctx) => _PeerPickerDialog(
+        peers: peers,
+        onSelected: (peer) async {
+          Navigator.pop(ctx);
+          await SyncService.instance.sendItemToPeer(item, peer);
+        },
+      ),
+    );
   }
 }
 
@@ -397,11 +439,13 @@ class _MacAlertDialog extends StatelessWidget {
   final String message;
   final String confirmLabel;
   final bool isDestructive;
+  final bool showCancel;
   const _MacAlertDialog({
     required this.title,
     required this.message,
     required this.confirmLabel,
     this.isDestructive = false,
+    this.showCancel = true,
   });
 
   @override
@@ -428,8 +472,10 @@ class _MacAlertDialog extends StatelessWidget {
             Row(
               mainAxisAlignment: MainAxisAlignment.center,
               children: [
-                _macBtn('取消', onTap: () => Navigator.pop(context, false)),
-                const SizedBox(width: 8),
+                if (showCancel) ...[
+                  _macBtn('取消', onTap: () => Navigator.pop(context, false)),
+                  const SizedBox(width: 8),
+                ],
                 _macBtn(confirmLabel,
                     onTap: () => Navigator.pop(context, true),
                     isPrimary: true,
@@ -468,3 +514,92 @@ class _MacAlertDialog extends StatelessWidget {
   }
 }
 
+class _PeerPickerDialog extends StatelessWidget {
+  final List<dynamic> peers;
+  final Future<void> Function(dynamic peer) onSelected;
+
+  const _PeerPickerDialog({required this.peers, required this.onSelected});
+
+  @override
+  Widget build(BuildContext context) {
+    return Dialog(
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+      backgroundColor: Colors.white,
+      child: SizedBox(
+        width: 320,
+        child: Padding(
+          padding: const EdgeInsets.fromLTRB(16, 18, 16, 14),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              const Text(
+                '选择同步目标',
+                style: TextStyle(
+                  fontWeight: FontWeight.w600,
+                  fontSize: 14,
+                  color: _kTextPrimary,
+                ),
+              ),
+              const SizedBox(height: 12),
+              for (int i = 0; i < peers.length; i++) ...[
+                InkWell(
+                  borderRadius: BorderRadius.circular(8),
+                  onTap: () => onSelected(peers[i]),
+                  child: Padding(
+                    padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 10),
+                    child: Row(
+                      children: [
+                        const Icon(Icons.devices, size: 18, color: _kAccent),
+                        const SizedBox(width: 10),
+                        Expanded(
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Text(
+                                peers[i].name,
+                                style: const TextStyle(fontSize: 13, color: _kTextPrimary),
+                              ),
+                              Text(
+                                '${peers[i].host}:${peers[i].port}',
+                                style: const TextStyle(fontSize: 11, color: _kTextSecondary),
+                              ),
+                            ],
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                ),
+                if (i < peers.length - 1)
+                  const Divider(height: 1, thickness: 0.5, color: _kSeparator),
+              ],
+              const SizedBox(height: 12),
+              Align(
+                alignment: Alignment.centerRight,
+                child: GestureDetector(
+                  onTap: () => Navigator.pop(context),
+                  child: Container(
+                    padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 7),
+                    decoration: BoxDecoration(
+                      color: const Color(0xFFE5E5EA),
+                      borderRadius: BorderRadius.circular(6),
+                    ),
+                    child: const Text(
+                      '取消',
+                      style: TextStyle(
+                        fontSize: 13,
+                        fontWeight: FontWeight.w500,
+                        color: _kTextPrimary,
+                      ),
+                    ),
+                  ),
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}
