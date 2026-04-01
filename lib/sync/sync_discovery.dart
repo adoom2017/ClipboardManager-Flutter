@@ -11,15 +11,17 @@ const _serviceType = '_clipmgr._tcp';
 
 class DiscoveredPeer {
   final String id;
-  final String name;
+  final String displayName;
   final String host;
   final int port;
   DiscoveredPeer({
     required this.id,
-    required this.name,
+    required this.displayName,
     required this.host,
     required this.port,
   });
+
+  String get name => displayName;
 }
 
 class SyncDiscovery {
@@ -129,7 +131,7 @@ class SyncDiscovery {
               }
               final peer = DiscoveredPeer(
                 id: id,
-                name: id,
+                displayName: _friendlyDisplayName(addressName, fallback: id),
                 host: ip.address.address,
                 port: srv.port,
               );
@@ -250,12 +252,15 @@ class SyncDiscovery {
       final id = payload['id'] as String?;
       final name = payload['name'] as String?;
       final port = payload['port'] as int?;
-      if (id == null || name == null || port == null || id == localId) return;
+      if (id == null || port == null || id == localId) return;
       final host = (payload['host'] as String?) ?? datagram.address.address;
+      final displayName = (name != null && name.trim().isNotEmpty)
+          ? name.trim()
+          : _friendlyDisplayName(host, fallback: id);
 
-      _peerCtrl.add(DiscoveredPeer(id: id, name: name, host: host, port: port));
+      _peerCtrl.add(DiscoveredPeer(id: id, displayName: displayName, host: host, port: port));
       _logDebug(
-        'broadcast peer discovered id=$id name=$name host=$host sender=${datagram.address.address} port=$port',
+        'broadcast peer discovered id=$id displayName=$displayName host=$host sender=${datagram.address.address} port=$port',
       );
     } catch (_) {
       // Ignore malformed broadcast packets from unrelated applications.
@@ -375,6 +380,14 @@ class SyncDiscovery {
       'meta',
     ];
     return blockedTokens.any(normalized.contains);
+  }
+
+  String _friendlyDisplayName(String raw, {required String fallback}) {
+    final normalized = _stripTrailingDot(raw).trim();
+    if (normalized.isEmpty) return fallback;
+    final firstLabel = normalized.split('.').first.trim();
+    if (firstLabel.isEmpty) return fallback;
+    return firstLabel;
   }
 
   void _logDebug(String message) =>

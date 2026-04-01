@@ -29,6 +29,7 @@ class SyncAdvertiser {
   late String _hostName;
   late int _serverPort;
   late String _localId;
+  late String _localName;
   final Set<String> _localAddresses = {};
   final List<InternetAddress> _ipv4Addresses = [];
 
@@ -38,6 +39,7 @@ class SyncAdvertiser {
     required int serverPort,
   }) async {
     _localId = localId;
+    _localName = localName;
     _serviceTypeFqdn = '$_serviceType.local';
     _instanceName = '$localId.$_serviceTypeFqdn';
     _hostName = '${_sanitizeHostLabel(localName)}.local';
@@ -390,7 +392,7 @@ class SyncAdvertiser {
 
       final peer = DiscoveredPeer(
         id: id,
-        name: id,
+        displayName: _friendlyDisplayName(srv.target, fallback: id),
         host: ip.address,
         port: srv.port,
       );
@@ -449,6 +451,13 @@ class SyncAdvertiser {
     return builder.toBytes();
   }
 
+  String _friendlyDisplayName(String raw, {required String fallback}) {
+    final normalized = raw.endsWith('.') ? raw.substring(0, raw.length - 1) : raw;
+    final firstLabel = normalized.split('.').first.trim();
+    if (firstLabel.isEmpty) return fallback;
+    return firstLabel;
+  }
+
   _DnsRecord _ptrRecord(String name, String domainName) {
     return _DnsRecord(
       name: name,
@@ -480,6 +489,7 @@ class SyncAdvertiser {
   _DnsRecord _txtRecord() {
     final entries = [
       'id=${_instanceName.split('.').first}',
+      'name=$_localName',
       'ver=1',
     ];
     final builder = BytesBuilder();

@@ -172,7 +172,7 @@ class _PeerRow extends StatelessWidget {
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                Text(peer.name, style: const TextStyle(fontSize: 13, color: _kTextPrimary)),
+                Text(peer.displayName, style: const TextStyle(fontSize: 13, color: _kTextPrimary)),
                 Text(
                   '${peer.host}:${peer.port}',
                   style: const TextStyle(fontSize: 11, color: _kTextSecondary),

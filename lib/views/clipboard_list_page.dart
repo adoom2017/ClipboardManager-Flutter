@@ -351,7 +351,7 @@ class _ClipboardItemTileState extends State<_ClipboardItemTile> {
         context: context,
         builder: (ctx) => _MacAlertDialog(
           title: '同步失败',
-          message: '无法同步到 ${peer.name}。\n$error',
+          message: '无法同步到 ${peer.displayName}。\n$error',
           confirmLabel: '确定',
           showCancel: false,
         ),
@@ -574,7 +574,7 @@ class _PeerPickerDialog extends StatelessWidget {
                             crossAxisAlignment: CrossAxisAlignment.start,
                             children: [
                               Text(
-                                peers[i].name,
+                                peers[i].displayName,
                                 style: const TextStyle(fontSize: 13, color: _kTextPrimary),
                               ),
                               Text(

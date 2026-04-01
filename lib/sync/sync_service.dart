@@ -70,7 +70,7 @@ class SyncService extends ChangeNotifier {
 
   Future<void> sendItemToPeer(ClipboardItem item, DiscoveredPeer peer) async {
     if (item.contentType != ClipboardContentType.text) return;
-    _logInfo('sendItemToPeer itemId=${item.id} peerId=${peer.id} host=${peer.host} port=${peer.port}');
+    _logInfo('sendItemToPeer itemId=${item.id} peerId=${peer.id} displayName=${peer.displayName} host=${peer.host} port=${peer.port}');
     final socket = await Socket.connect(peer.host, peer.port);
     final ackCompleter = Completer<void>();
     final conn = SyncConnection(
@@ -87,7 +87,7 @@ class SyncService extends ChangeNotifier {
     late final StreamSubscription<SyncMessage> subscription;
     subscription = conn.messages.listen((msg) async {
       if (msg.type == SyncMessageType.ack) {
-        _logInfo('sync acknowledged peerId=${peer.id}');
+        _logInfo('sync acknowledged peerId=${peer.id} displayName=${peer.displayName}');
         if (!ackCompleter.isCompleted) {
           ackCompleter.complete();
         }
@@ -183,17 +183,23 @@ class SyncService extends ChangeNotifier {
     final existingIndex = _discoveredPeers.indexWhere((candidate) => candidate.id == peer.id);
     if (existingIndex >= 0) {
       final previous = _discoveredPeers[existingIndex];
+      final mergedDisplayName = _chooseDisplayName(previous.displayName, peer.displayName, peer.id);
       final changed = previous.host != peer.host || previous.port != peer.port;
       final updateMessage =
-          'update discovered peer id=${peer.id} oldHost=${previous.host} oldPort=${previous.port} newHost=${peer.host} newPort=${peer.port}';
+          'update discovered peer id=${peer.id} displayName=$mergedDisplayName oldHost=${previous.host} oldPort=${previous.port} newHost=${peer.host} newPort=${peer.port}';
       if (changed) {
         _logInfo(updateMessage);
       } else {
         _logDebug(updateMessage);
       }
-      _discoveredPeers[existingIndex] = peer;
+      _discoveredPeers[existingIndex] = DiscoveredPeer(
+        id: peer.id,
+        displayName: mergedDisplayName,
+        host: peer.host,
+        port: peer.port,
+      );
     } else {
-      _logInfo('add discovered peer id=${peer.id} host=${peer.host} port=${peer.port}');
+      _logInfo('add discovered peer id=${peer.id} displayName=${peer.displayName} host=${peer.host} port=${peer.port}');
       _discoveredPeers.add(peer);
     }
     notifyListeners();
@@ -263,6 +269,25 @@ class SyncService extends ChangeNotifier {
       return DateTime.tryParse(value)?.toUtc() ?? DateTime.now().toUtc();
     }
     return DateTime.now().toUtc();
+  }
+
+  String _chooseDisplayName(String current, String incoming, String fallbackId) {
+    if (_isBetterDisplayName(current, incoming, fallbackId)) {
+      return incoming;
+    }
+    return current;
+  }
+
+  bool _isBetterDisplayName(String current, String incoming, String fallbackId) {
+    final normalizedCurrent = current.trim();
+    final normalizedIncoming = incoming.trim();
+    if (normalizedCurrent.isEmpty) return normalizedIncoming.isNotEmpty;
+    if (normalizedIncoming.isEmpty) return false;
+    final currentIsFallback = normalizedCurrent == fallbackId;
+    final incomingIsFallback = normalizedIncoming == fallbackId;
+    if (currentIsFallback && !incomingIsFallback) return true;
+    if (!currentIsFallback && incomingIsFallback) return false;
+    return false;
   }
 
   void _logDebug(String message) => AppLogger.instance.debug('SyncService', message);
