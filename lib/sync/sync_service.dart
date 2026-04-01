@@ -2,6 +2,7 @@ import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 import 'package:flutter/foundation.dart';
+import '../core/app_logger.dart';
 import '../models/clipboard_item.dart';
 import '../storage/clipboard_store.dart';
 import '../storage/settings_store.dart';
@@ -25,7 +26,7 @@ class SyncService extends ChangeNotifier {
   Future<void> start() async {
     final settings = SettingsStore();
     _server = await ServerSocket.bind(InternetAddress.anyIPv4, 0);
-    _log('TCP server listening on ${_server!.address.address}:${_server!.port}');
+    _logInfo('TCP server listening on ${_server!.address.address}:${_server!.port}');
     _server!.listen(_onIncomingConnection);
 
     await _advertiser.start(
@@ -59,7 +60,7 @@ class SyncService extends ChangeNotifier {
 
   Future<void> sendItemToPeer(ClipboardItem item, DiscoveredPeer peer) async {
     if (item.contentType != ClipboardContentType.text) return;
-    _log('sendItemToPeer itemId=${item.id} peerId=${peer.id} host=${peer.host} port=${peer.port}');
+    _logInfo('sendItemToPeer itemId=${item.id} peerId=${peer.id} host=${peer.host} port=${peer.port}');
     final socket = await Socket.connect(peer.host, peer.port);
     final conn = SyncConnection(socket, peer.id);
     conn.messages.listen((msg) => _handleMessage(msg, conn));
@@ -75,33 +76,33 @@ class SyncService extends ChangeNotifier {
   }
 
   void _onIncomingConnection(Socket socket) {
-    _log('incoming TCP connection from ${socket.remoteAddress.address}:${socket.remotePort}');
+    _logDebug('incoming TCP connection from ${socket.remoteAddress.address}:${socket.remotePort}');
     final conn = SyncConnection(socket, '');
     conn.messages.listen((msg) => _handleMessage(msg, conn));
   }
 
   void _handleMessage(SyncMessage msg, SyncConnection conn) async {
-    _log('received type=${msg.type.name} senderID=${msg.senderId} senderName=${msg.senderName}');
+    _logDebug('received type=${msg.type.name} senderID=${msg.senderId} senderName=${msg.senderName}');
     switch (msg.type) {
       case SyncMessageType.hello:
         break;
       case SyncMessageType.items:
         final payloadText = _decodePlainPayload(msg.plainPayload);
         if (payloadText == null) {
-          _log('missing items payload from ${msg.senderId}');
+          _logWarn('missing items payload from ${msg.senderId}');
           await conn.close();
           break;
         }
         try {
           final payload = jsonDecode(payloadText) as Map<String, dynamic>;
           final list = (payload['items'] as List<dynamic>? ?? const []);
-          _log('received ${list.length} synced item(s) from ${msg.senderId}');
+          _logInfo('received ${list.length} synced item(s) from ${msg.senderId}');
           for (final raw in list) {
             final item = _syncItemFromJson(raw as Map<String, dynamic>);
             await ClipboardStore().addItem(item);
           }
         } catch (error) {
-          _log('failed to apply items from ${msg.senderId}: $error');
+          _logError('failed to apply items from ${msg.senderId}: $error');
         }
         await conn.close();
         break;
@@ -124,7 +125,7 @@ class SyncService extends ChangeNotifier {
     final payload = jsonEncode({
       'items': textItems.map((item) => _syncItemToJson(item)).toList(),
     });
-    _log('sending ${textItems.length} item(s)');
+    _logDebug('sending ${textItems.length} item(s)');
     await conn.send(SyncMessage(
       type: SyncMessageType.items,
       senderId: SettingsStore().syncLocalDeviceId,
@@ -141,17 +142,25 @@ class SyncService extends ChangeNotifier {
     final existingIndex = _discoveredPeers.indexWhere((candidate) => candidate.id == peer.id);
     if (existingIndex >= 0) {
       final previous = _discoveredPeers[existingIndex];
-      _log(
-        'update discovered peer id=${peer.id} '
-        'oldHost=${previous.host} oldPort=${previous.port} '
-        'newHost=${peer.host} newPort=${peer.port}',
-      );
+      final changed = previous.host != peer.host || previous.port != peer.port;
+      final updateMessage =
+          'update discovered peer id=${peer.id} oldHost=${previous.host} oldPort=${previous.port} newHost=${peer.host} newPort=${peer.port}';
+      if (changed) {
+        _logInfo(updateMessage);
+      } else {
+        _logDebug(updateMessage);
+      }
       _discoveredPeers[existingIndex] = peer;
     } else {
-      _log('add discovered peer id=${peer.id} host=${peer.host} port=${peer.port}');
+      _logInfo('add discovered peer id=${peer.id} host=${peer.host} port=${peer.port}');
       _discoveredPeers.add(peer);
     }
     notifyListeners();
+  }
+
+  void boostDiscovery() {
+    _advertiser.boostDiscovery();
+    _discovery.boostDiscovery();
   }
 
   String _encodePlainPayload(String value) {
@@ -199,11 +208,10 @@ class SyncService extends ChangeNotifier {
     return DateTime.now().toUtc();
   }
 
-  void _log(String message) {
-    if (kDebugMode) {
-      debugPrint('[SyncService] $message');
-    }
-  }
+  void _logDebug(String message) => AppLogger.instance.debug('SyncService', message);
+  void _logInfo(String message) => AppLogger.instance.info('SyncService', message);
+  void _logWarn(String message) => AppLogger.instance.warn('SyncService', message);
+  void _logError(String message) => AppLogger.instance.error('SyncService', message);
 }
 
 final DateTime _appleReferenceDate = DateTime.utc(2001, 1, 1);

@@ -2,8 +2,9 @@ import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 import 'dart:typed_data';
-import 'package:flutter/foundation.dart';
+import '../core/app_logger.dart';
 import 'sync_discovery.dart';
+import 'sync_cadence_scheduler.dart';
 
 const _serviceType = '_clipmgr._tcp';
 const _mdnsTtlSeconds = 120;
@@ -18,7 +19,7 @@ const _resourceRecordTypeService = 33;
 
 class SyncAdvertiser {
   RawDatagramSocket? _socket;
-  Timer? _announceTimer;
+  SyncCadenceScheduler? _cadenceScheduler;
   final StreamController<DiscoveredPeer> _peerCtrl =
       StreamController<DiscoveredPeer>.broadcast();
   Stream<DiscoveredPeer> get peers => _peerCtrl.stream;
@@ -45,12 +46,12 @@ class SyncAdvertiser {
       ..clear()
       ..addAll(await _discoverLocalIpv4Addresses());
 
-    _log('localId=$localId localName=$localName');
-    _log('service=$_instanceName host=$_hostName port=$serverPort');
-    _log('selectedIPv4=${_ipv4Addresses.map((e) => e.address).join(", ")}');
+    _logInfo('localId=$localId localName=$localName');
+    _logInfo('service=$_instanceName host=$_hostName port=$serverPort');
+    _logInfo('selectedIPv4=${_ipv4Addresses.map((e) => e.address).join(", ")}');
 
     if (_ipv4Addresses.isEmpty) {
-      _log('no eligible private IPv4 address found; mDNS advertisement disabled');
+      _logWarn('no eligible private IPv4 address found; mDNS advertisement disabled');
       return;
     }
 
@@ -65,7 +66,7 @@ class SyncAdvertiser {
     } on SocketException {
       // If another mDNS responder already owns the port we keep the app usable
       // and fall back to the UDP broadcast discovery path.
-      _log('failed to bind UDP/5353; falling back to broadcast discovery only');
+      _logWarn('failed to bind UDP/5353; falling back to broadcast discovery only');
       return;
     }
 
@@ -97,30 +98,33 @@ class SyncAdvertiser {
 
     _sendAnnouncement();
     _sendDiscoveryQuery();
-    _log('announcement sent');
-    _announceTimer?.cancel();
-    _announceTimer = Timer.periodic(
-      const Duration(seconds: 10),
-      (_) {
-        _log('periodic announcement');
+    _logInfo('mDNS advertiser started');
+    _cadenceScheduler?.stop();
+    _cadenceScheduler = SyncCadenceScheduler(
+      action: () {
         _sendAnnouncement();
         _sendDiscoveryQuery();
       },
-    );
-  }
-
-  void _log(String message) {
-    if (kDebugMode) {
-      debugPrint('[SyncAdvertiser] $message');
-    }
+      onPhaseChanged: (phase) {
+        if (phase == SyncCadencePhase.burst) {
+          _logInfo('advertiser cadence entered burst mode');
+        } else {
+          _logInfo('advertiser cadence switched to steady interval');
+        }
+      },
+    )..start(fireImmediately: false);
   }
 
   Future<void> stop() async {
-    _announceTimer?.cancel();
-    _announceTimer = null;
+    _cadenceScheduler?.stop();
+    _cadenceScheduler = null;
     _socket?.close();
     _socket = null;
     _ipv4Addresses.clear();
+  }
+
+  void boostDiscovery() {
+    _cadenceScheduler?.retriggerBurst(fireImmediately: true);
   }
 
   Future<List<InternetAddress>> _discoverLocalIpv4Addresses() async {
@@ -217,7 +221,7 @@ class SyncAdvertiser {
   void _handleQuery(Datagram datagram) {
     final query = _decodeMdnsQuery(datagram.data);
     if (query == null) return;
-    _log('received mDNS query type=${query.resourceRecordType} name=${query.fullyQualifiedName} from=${datagram.address.address}:${datagram.port}');
+    _logDebug('received mDNS query type=${query.resourceRecordType} name=${query.fullyQualifiedName} from=${datagram.address.address}:${datagram.port}');
 
     final answers = <_DnsRecord>[];
     final additionals = <_DnsRecord>[];
@@ -283,7 +287,7 @@ class SyncAdvertiser {
       ..setUint16(2, _resourceRecordClassInternet);
     builder.add(question.buffer.asUint8List());
     _socket!.send(builder.toBytes(), _mDnsAddressIPv4, _mDnsPort);
-    _log('sent PTR discovery query for $_serviceTypeFqdn');
+    _logDebug('sent PTR discovery query for $_serviceTypeFqdn');
   }
 
   void _sendResponse({
@@ -301,7 +305,7 @@ class SyncAdvertiser {
     final packet = _decodeMdnsPacket(datagram.data);
     if (packet == null) return;
     if (!packet.isResponse || packet.answers.isEmpty) return;
-    _log('received mDNS response answers=${packet.answers.length} from=${datagram.address.address}:${datagram.port}');
+    _logDebug('received mDNS response answers=${packet.answers.length} from=${datagram.address.address}:${datagram.port}');
 
     final ptrTargets = <String>{};
     final srvRecords = <String, _SrvRecordData>{};
@@ -317,7 +321,7 @@ class SyncAdvertiser {
             answer.dataOffset,
           )?.name;
           if (target != null) {
-            _log('PTR answer name=${answer.name} target=$target');
+            _logDebug('PTR answer name=${answer.name} target=$target');
             ptrTargets.add(target);
           }
           break;
@@ -330,7 +334,7 @@ class SyncAdvertiser {
             answer.dataOffset + 6,
           )?.name;
           if (target != null) {
-            _log('SRV answer name=${answer.name} target=$target port=$port');
+            _logDebug('SRV answer name=${answer.name} target=$target port=$port');
             srvRecords[answer.name.toLowerCase()] =
                 _SrvRecordData(target: target, port: port);
           }
@@ -340,7 +344,7 @@ class SyncAdvertiser {
           final address = InternetAddress.fromRawAddress(
               packet.rawData.sublist(answer.dataOffset, answer.dataOffset + 4),
               type: InternetAddressType.IPv4);
-          _log('A answer name=${answer.name} address=${address.address}');
+          _logDebug('A answer name=${answer.name} address=${address.address}');
           aRecords[answer.name.toLowerCase()] = address;
           break;
       }
@@ -361,7 +365,7 @@ class SyncAdvertiser {
         host: ip.address,
         port: srv.port,
       );
-      _log('mDNS peer discovered id=${peer.id} host=${peer.host} port=${peer.port}');
+      _logDebug('mDNS peer discovered id=${peer.id} host=${peer.host} port=${peer.port}');
       _peerCtrl.add(peer);
     }
   }
@@ -597,6 +601,10 @@ class SyncAdvertiser {
 
     return null;
   }
+
+  void _logDebug(String message) => AppLogger.instance.debug('SyncAdvertiser', message);
+  void _logInfo(String message) => AppLogger.instance.info('SyncAdvertiser', message);
+  void _logWarn(String message) => AppLogger.instance.warn('SyncAdvertiser', message);
 }
 
 class _DnsRecord {

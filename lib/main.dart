@@ -6,6 +6,7 @@ import 'package:hotkey_manager/hotkey_manager.dart';
 import 'package:provider/provider.dart';
 import 'package:tray_manager/tray_manager.dart';
 import 'package:window_manager/window_manager.dart';
+import 'core/app_logger.dart';
 import 'core/auto_paste_service.dart';
 import 'core/clipboard_monitor.dart';
 import 'core/window_activation_service.dart';
@@ -20,6 +21,8 @@ final ValueNotifier<int> shellPageIndex = ValueNotifier<int>(0);
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
+
+  await AppLogger.instance.initialize();
 
   // Init settings first
   await SettingsStore().init();

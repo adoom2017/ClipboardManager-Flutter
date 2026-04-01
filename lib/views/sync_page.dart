@@ -20,6 +20,7 @@ class _SyncPageState extends State<SyncPage> {
   void initState() {
     super.initState();
     SyncService.instance.addListener(_rebuild);
+    SyncService.instance.boostDiscovery();
   }
 
   void _rebuild() {

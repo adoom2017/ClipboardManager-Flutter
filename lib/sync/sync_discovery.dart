@@ -1,8 +1,9 @@
 import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
-import 'package:flutter/foundation.dart';
 import 'package:multicast_dns/multicast_dns.dart';
+import '../core/app_logger.dart';
+import 'sync_cadence_scheduler.dart';
 
 const _broadcastPort = 44561;
 const _broadcastSignature = 'clipmgr-sync-v1';
@@ -19,8 +20,8 @@ class DiscoveredPeer {
 class SyncDiscovery {
   RawDatagramSocket? _broadcastReceiveSocket;
   RawDatagramSocket? _broadcastSendSocket;
-  Timer? _announceTimer;
-  Timer? _mdnsQueryTimer;
+  SyncCadenceScheduler? _broadcastCadence;
+  SyncCadenceScheduler? _mdnsCadence;
   MDnsClient? _mdnsClient;
   final _peerCtrl = StreamController<DiscoveredPeer>.broadcast();
   Stream<DiscoveredPeer> get peers => _peerCtrl.stream;
@@ -31,7 +32,7 @@ class SyncDiscovery {
     required String localName,
     required int serverPort,
   }) async {
-    _log('start broadcast fallback localId=$localId localName=$localName serverPort=$serverPort');
+    _logInfo('start broadcast fallback localId=$localId localName=$localName serverPort=$serverPort');
     await _startMdnsDiscovery(localId);
     await _startBroadcastDiscovery(
       localId: localId,
@@ -47,9 +48,9 @@ class SyncDiscovery {
     try {
       await client.start();
       _mdnsClient = client;
-      _log('mDNS client started');
+      _logInfo('mDNS client started');
     } catch (error) {
-      _log('mDNS client failed to start error=$error');
+      _logWarn('mDNS client failed to start error=$error');
       client.stop();
       return;
     }
@@ -59,14 +60,14 @@ class SyncDiscovery {
         await for (final PtrResourceRecord ptr in client.lookup<PtrResourceRecord>(
           ResourceRecordQuery.serverPointer('$_serviceType.local'),
         )) {
-          _log('mDNS PTR discovered domainName=${ptr.domainName}');
+          _logDebug('mDNS PTR discovered domainName=${ptr.domainName}');
           final id = _extractPeerId(ptr.domainName);
           if (id == null) {
-            _log('mDNS PTR ignored because peer id could not be extracted domainName=${ptr.domainName}');
+            _logDebug('mDNS PTR ignored because peer id could not be extracted domainName=${ptr.domainName}');
             continue;
           }
           if (id == localId) {
-            _log('mDNS PTR ignored because it is the local service id=$id');
+            _logDebug('mDNS PTR ignored because it is the local service id=$id');
             continue;
           }
 
@@ -75,25 +76,25 @@ class SyncDiscovery {
               .lookup<SrvResourceRecord>(ResourceRecordQuery.service(serviceName))
               .toList();
           if (srvRecords.isEmpty) {
-            _log('mDNS SRV lookup returned no results id=$id serviceName=$serviceName');
+            _logDebug('mDNS SRV lookup returned no results id=$id serviceName=$serviceName');
             continue;
           }
 
           for (final srv in srvRecords) {
-            _log('mDNS SRV discovered id=$id target=${srv.target} port=${srv.port}');
+            _logDebug('mDNS SRV discovered id=$id target=${srv.target} port=${srv.port}');
             final addressName = _stripTrailingDot(srv.target);
             final ipRecords = await client
                 .lookup<IPAddressResourceRecord>(ResourceRecordQuery.addressIPv4(addressName))
                 .toList();
             if (ipRecords.isEmpty) {
-              _log('mDNS A lookup returned no results id=$id target=$addressName');
+              _logDebug('mDNS A lookup returned no results id=$id target=$addressName');
               continue;
             }
 
             for (final ip in ipRecords) {
-              _log('mDNS A discovered id=$id target=${srv.target} address=${ip.address.address}');
+              _logDebug('mDNS A discovered id=$id target=${srv.target} address=${ip.address.address}');
               if (!_isPrivateLanAddress(ip.address.address)) {
-                _log('mDNS A ignored because address is not private LAN id=$id address=${ip.address.address}');
+                _logDebug('mDNS A ignored because address is not private LAN id=$id address=${ip.address.address}');
                 continue;
               }
               final peer = DiscoveredPeer(
@@ -102,21 +103,28 @@ class SyncDiscovery {
                 host: ip.address.address,
                 port: srv.port,
               );
-              _log('mDNS peer discovered id=${peer.id} host=${peer.host} port=${peer.port}');
+              _logDebug('mDNS peer discovered id=${peer.id} host=${peer.host} port=${peer.port}');
               _peerCtrl.add(peer);
             }
           }
         }
       } catch (error) {
-        _log('mDNS lookup failed error=$error');
+        _logWarn('mDNS lookup failed error=$error');
       }
     }
 
     await queryOnce();
-    _mdnsQueryTimer?.cancel();
-    _mdnsQueryTimer = Timer.periodic(const Duration(seconds: 5), (_) {
-      unawaited(queryOnce());
-    });
+    _mdnsCadence?.stop();
+    _mdnsCadence = SyncCadenceScheduler(
+      action: queryOnce,
+      onPhaseChanged: (phase) {
+        if (phase == SyncCadencePhase.burst) {
+          _logInfo('mDNS cadence entered burst mode');
+        } else {
+          _logInfo('mDNS cadence switched to steady interval');
+        }
+      },
+    )..start(fireImmediately: false);
   }
 
   Future<void> _startBroadcastDiscovery({
@@ -124,9 +132,9 @@ class SyncDiscovery {
     required String localName,
     required int serverPort,
   }) async {
-    _log('starting UDP broadcast discovery on port=$_broadcastPort');
+    _logInfo('starting UDP broadcast discovery on port=$_broadcastPort');
     _localAddress = await _discoverPreferredLocalIpv4();
-    _log('selectedIPv4=${_localAddress?.address ?? "unavailable"}');
+    _logInfo('selectedIPv4=${_localAddress?.address ?? "unavailable"}');
 
     _broadcastReceiveSocket = await RawDatagramSocket.bind(
       InternetAddress.anyIPv4,
@@ -157,7 +165,7 @@ class SyncDiscovery {
       ..broadcastEnabled = true
       ..readEventsEnabled = false
       ..writeEventsEnabled = false;
-    _log(
+    _logInfo(
       'broadcast sockets ready receive=${_broadcastReceiveSocket!.address.address}:${_broadcastReceiveSocket!.port} '
       'send=${_broadcastSendSocket!.address.address}:${_broadcastSendSocket!.port}',
     );
@@ -176,14 +184,24 @@ class SyncDiscovery {
           InternetAddress('255.255.255.255'),
           _broadcastPort,
         );
-        _log('broadcast announce id=$localId name=$localName port=$serverPort host=${_localAddress?.address ?? "packet-source"}');
+        _logDebug('broadcast announce id=$localId name=$localName port=$serverPort host=${_localAddress?.address ?? "packet-source"}');
       } on SocketException catch (error) {
-        _log('broadcast announce failed error=$error');
+        _logWarn('broadcast announce failed error=$error');
       }
     }
 
     announce();
-    _announceTimer = Timer.periodic(const Duration(seconds: 2), (_) => announce());
+    _broadcastCadence?.stop();
+    _broadcastCadence = SyncCadenceScheduler(
+      action: announce,
+      onPhaseChanged: (phase) {
+        if (phase == SyncCadencePhase.burst) {
+          _logInfo('broadcast cadence entered burst mode');
+        } else {
+          _logInfo('broadcast cadence switched to steady interval');
+        }
+      },
+    )..start(fireImmediately: false);
   }
 
   void _handleBroadcastDatagram(Datagram datagram, String localId) {
@@ -203,24 +221,29 @@ class SyncDiscovery {
         host: host,
         port: port,
       ));
-      _log('broadcast peer discovered id=$id name=$name host=$host sender=${datagram.address.address} port=$port');
+      _logDebug('broadcast peer discovered id=$id name=$name host=$host sender=${datagram.address.address} port=$port');
     } catch (_) {
       // Ignore malformed broadcast packets from unrelated applications.
     }
   }
 
   Future<void> stop() async {
-    _mdnsQueryTimer?.cancel();
-    _mdnsQueryTimer = null;
+    _mdnsCadence?.stop();
+    _mdnsCadence = null;
     _mdnsClient?.stop();
     _mdnsClient = null;
-    _announceTimer?.cancel();
-    _announceTimer = null;
+    _broadcastCadence?.stop();
+    _broadcastCadence = null;
     _broadcastReceiveSocket?.close();
     _broadcastReceiveSocket = null;
     _broadcastSendSocket?.close();
     _broadcastSendSocket = null;
     _localAddress = null;
+  }
+
+  void boostDiscovery() {
+    _mdnsCadence?.retriggerBurst(fireImmediately: true);
+    _broadcastCadence?.retriggerBurst(fireImmediately: true);
   }
 
   String? _extractPeerId(String domainName) {
@@ -316,11 +339,9 @@ class SyncDiscovery {
     return 1;
   }
 
-  void _log(String message) {
-    if (kDebugMode) {
-      debugPrint('[SyncDiscovery] $message');
-    }
-  }
+  void _logDebug(String message) => AppLogger.instance.debug('SyncDiscovery', message);
+  void _logInfo(String message) => AppLogger.instance.info('SyncDiscovery', message);
+  void _logWarn(String message) => AppLogger.instance.warn('SyncDiscovery', message);
 }
 
 class _BroadcastAddressCandidate {

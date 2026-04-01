@@ -1,4 +1,5 @@
 import 'dart:io';
+import '../core/app_logger.dart';
 import '../models/clipboard_item.dart';
 
 class PersistenceController {
@@ -19,7 +20,8 @@ class PersistenceController {
       final content = await file.readAsString();
       if (content.trim().isEmpty) return [];
       return ClipboardItem.listFromJson(content);
-    } catch (_) {
+    } catch (error) {
+      AppLogger.instance.error('Persistence', 'failed to load clipboard items error=$error');
       return [];
     }
   }
@@ -28,7 +30,9 @@ class PersistenceController {
     try {
       final path = await _filePath;
       await File(path).writeAsString(ClipboardItem.listToJson(items));
-    } catch (_) {}
+    } catch (error) {
+      AppLogger.instance.error('Persistence', 'failed to save clipboard items error=$error');
+    }
   }
 
   Future<void> delete() async {
@@ -36,6 +40,8 @@ class PersistenceController {
       final path = await _filePath;
       final file = File(path);
       if (await file.exists()) await file.delete();
-    } catch (_) {}
+    } catch (error) {
+      AppLogger.instance.warn('Persistence', 'failed to delete clipboard history error=$error');
+    }
   }
 }
