@@ -1,5 +1,6 @@
 import 'dart:async';
 import 'dart:ffi';
+import 'dart:io';
 import 'package:ffi/ffi.dart';
 import 'package:flutter/services.dart';
 import 'package:win32/win32.dart';
@@ -58,6 +59,9 @@ class ClipboardMonitor {
   }
 
   String _getForegroundAppName() {
+    if (!Platform.isWindows) {
+      return Platform.isMacOS ? 'macOS App' : 'Unknown';
+    }
     try {
       final hWnd = GetForegroundWindow();
       if (hWnd == 0) return 'Unknown';

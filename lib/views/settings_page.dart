@@ -69,18 +69,6 @@ class _SettingsBody extends StatelessWidget {
           ),
         ]),
         const SizedBox(height: 20),
-        _section('同步', [
-          _row(
-            label: '自动同步',
-            subtitle: '配对后自动同步剪贴板历史',
-            trailing: CupertinoSwitch(
-              value: s.autoSync,
-              onChanged: s.setAutoSync,
-              activeTrackColor: const Color(0xFF34C759),
-            ),
-          ),
-        ]),
-        const SizedBox(height: 20),
         _section('数据', [
           _DestructiveRow(
             label: '清空所有历史',
@@ -533,4 +521,3 @@ class _PasswordFieldState extends State<_PasswordField> {
     );
   }
 }
-

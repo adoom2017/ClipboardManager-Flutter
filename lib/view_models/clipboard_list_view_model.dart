@@ -1,3 +1,4 @@
+import 'dart:io';
 import 'package:flutter/foundation.dart';
 import 'package:window_manager/window_manager.dart';
 import '../models/clipboard_item.dart';
@@ -33,7 +34,9 @@ class ClipboardListViewModel extends ChangeNotifier {
 
   Future<void> pasteItem(ClipboardItem item) async {
     // Hide our window first so the target window can receive the paste
-    await windowManager.hide();
+    if (Platform.isWindows) {
+      await windowManager.hide();
+    }
     await AutoPasteService.paste(item.content);
   }
 

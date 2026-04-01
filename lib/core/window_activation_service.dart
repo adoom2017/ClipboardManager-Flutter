@@ -1,7 +1,9 @@
 import 'dart:ffi';
+import 'dart:io';
 
 import 'package:ffi/ffi.dart';
 import 'package:win32/win32.dart' as win32;
+import 'package:window_manager/window_manager.dart';
 
 class WindowActivationService {
   static const _windowClassName = 'FLUTTER_RUNNER_WIN32_WINDOW';
@@ -47,6 +49,10 @@ class WindowActivationService {
   }
 
   static Future<void> showInactive() async {
+    if (!Platform.isWindows) {
+      await windowManager.show();
+      return;
+    }
     final hwnd = _findMainWindow();
     if (hwnd == null) return;
 
@@ -67,6 +73,11 @@ class WindowActivationService {
   }
 
   static Future<void> showInteractive() async {
+    if (!Platform.isWindows) {
+      await windowManager.show();
+      await windowManager.focus();
+      return;
+    }
     final hwnd = _findMainWindow();
     if (hwnd == null) return;
 
