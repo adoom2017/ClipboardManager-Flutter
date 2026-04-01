@@ -17,6 +17,7 @@ class DiscoveredPeer {
 class SyncDiscovery {
   RawDatagramSocket? _broadcastSocket;
   Timer? _announceTimer;
+  final Set<String> _localAddresses = {};
   final _peerCtrl = StreamController<DiscoveredPeer>.broadcast();
   Stream<DiscoveredPeer> get peers => _peerCtrl.stream;
 
@@ -25,6 +26,9 @@ class SyncDiscovery {
     required String localName,
     required int serverPort,
   }) async {
+    _localAddresses
+      ..clear()
+      ..addAll(await _discoverLocalIpv4Addresses());
     _log('start broadcast fallback localId=$localId localName=$localName serverPort=$serverPort');
     await _startBroadcastDiscovery(
       localId: localId,
@@ -78,6 +82,7 @@ class SyncDiscovery {
 
   void _handleBroadcastDatagram(Datagram datagram, String localId) {
     try {
+      if (_isLocalAddress(datagram.address.address)) return;
       final payload = jsonDecode(utf8.decode(datagram.data)) as Map<String, dynamic>;
       if (payload['signature'] != _broadcastSignature) return;
 
@@ -103,7 +108,28 @@ class SyncDiscovery {
     _announceTimer = null;
     _broadcastSocket?.close();
     _broadcastSocket = null;
+    _localAddresses.clear();
   }
+
+  Future<Set<String>> _discoverLocalIpv4Addresses() async {
+    final interfaces = await NetworkInterface.list(
+      includeLinkLocal: true,
+      includeLoopback: false,
+      type: InternetAddressType.IPv4,
+    );
+
+    final addresses = <String>{};
+    for (final interface in interfaces) {
+      for (final address in interface.addresses) {
+        if (address.type == InternetAddressType.IPv4 && !address.isLoopback) {
+          addresses.add(address.address);
+        }
+      }
+    }
+    return addresses;
+  }
+
+  bool _isLocalAddress(String address) => _localAddresses.contains(address);
 
   void _log(String message) {
     if (kDebugMode) {

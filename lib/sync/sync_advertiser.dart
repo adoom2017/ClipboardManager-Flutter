@@ -28,6 +28,7 @@ class SyncAdvertiser {
   late String _hostName;
   late int _serverPort;
   late String _localId;
+  final Set<String> _localAddresses = {};
   final List<InternetAddress> _ipv4Addresses = [];
 
   Future<void> start({
@@ -44,6 +45,9 @@ class SyncAdvertiser {
     _ipv4Addresses
       ..clear()
       ..addAll(await _discoverLocalIpv4Addresses());
+    _localAddresses
+      ..clear()
+      ..addAll(await _discoverAllLocalIpv4Addresses());
 
     _log('localId=$localId localName=$localName');
     _log('service=$_instanceName host=$_hostName port=$serverPort');
@@ -121,6 +125,7 @@ class SyncAdvertiser {
     _socket?.close();
     _socket = null;
     _ipv4Addresses.clear();
+    _localAddresses.clear();
   }
 
   Future<List<InternetAddress>> _discoverLocalIpv4Addresses() async {
@@ -157,6 +162,24 @@ class SyncAdvertiser {
 
     final selected = candidates.first;
     return [selected.address];
+  }
+
+  Future<Set<String>> _discoverAllLocalIpv4Addresses() async {
+    final interfaces = await NetworkInterface.list(
+      includeLinkLocal: true,
+      includeLoopback: false,
+      type: InternetAddressType.IPv4,
+    );
+
+    final addresses = <String>{};
+    for (final interface in interfaces) {
+      for (final address in interface.addresses) {
+        if (address.type == InternetAddressType.IPv4 && !address.isLoopback) {
+          addresses.add(address.address);
+        }
+      }
+    }
+    return addresses;
   }
 
   bool _isPrivateLanAddress(String address) {
@@ -298,6 +321,7 @@ class SyncAdvertiser {
   }
 
   void _handleMdnsResponse(Datagram datagram) {
+    if (_isLocalAddress(datagram.address.address)) return;
     final packet = _decodeMdnsPacket(datagram.data);
     if (packet == null) return;
     if (!packet.isResponse || packet.answers.isEmpty) return;
@@ -353,7 +377,12 @@ class SyncAdvertiser {
       final ip = srv == null
           ? null
           : aRecords[srv.target.toLowerCase()] ?? datagram.address;
-      if (srv == null || ip == null || !_isPrivateLanAddress(ip.address)) continue;
+      if (srv == null ||
+          ip == null ||
+          !_isPrivateLanAddress(ip.address) ||
+          _isLocalAddress(ip.address)) {
+        continue;
+      }
 
       final peer = DiscoveredPeer(
         id: id,
@@ -365,6 +394,8 @@ class SyncAdvertiser {
       _peerCtrl.add(peer);
     }
   }
+
+  bool _isLocalAddress(String address) => _localAddresses.contains(address);
 
   Uint8List _buildDnsResponse(
     List<_DnsRecord> answers,
