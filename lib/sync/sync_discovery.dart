@@ -221,8 +221,12 @@ class SyncDiscovery {
     _mdnsClient = null;
     _announceTimer?.cancel();
     _announceTimer = null;
-    _broadcastSocket?.close();
-    _broadcastSocket = null;
+    _broadcastReceiveSocket?.close();
+    _broadcastReceiveSocket = null;
+    _broadcastSendSocket?.close();
+    _broadcastSendSocket = null;
+    _localAddress = null;
+    _localAddresses.clear();
   }
 
   Future<Set<String>> _discoverLocalIpv4Addresses() async {
@@ -245,19 +249,81 @@ class SyncDiscovery {
 
   bool _isLocalAddress(String address) => _localAddresses.contains(address);
 
+  String? _extractPeerId(String domainName) {
+    final normalized = _stripTrailingDot(domainName).toLowerCase();
+    const suffix = '$_serviceType.local';
+    if (!normalized.endsWith(suffix)) return null;
+
+    final raw = _stripTrailingDot(domainName);
+    return raw.substring(0, raw.length - suffix.length - 1);
+  }
+
+  String _stripTrailingDot(String value) {
+    return value.endsWith('.') ? value.substring(0, value.length - 1) : value;
+  }
+
+  bool _isPrivateLanAddress(String address) {
+    if (address.startsWith('10.')) return true;
+    if (address.startsWith('192.168.')) return true;
+    if (!address.startsWith('172.')) return false;
+
+    final parts = address.split('.');
+    if (parts.length < 2) return false;
+    final secondOctet = int.tryParse(parts[1]);
+    return secondOctet != null && secondOctet >= 16 && secondOctet <= 31;
+  }
+
+  Future<InternetAddress?> _discoverPreferredLocalIpv4() async {
+    final interfaces = await NetworkInterface.list(
+      includeLinkLocal: true,
+      includeLoopback: false,
+      type: InternetAddressType.IPv4,
+    );
+
+    final candidates = <InternetAddress>[];
+    for (final interface in interfaces) {
+      if (_looksVirtualInterface(interface.name)) continue;
+      for (final address in interface.addresses) {
+        if (address.type != InternetAddressType.IPv4 || address.isLoopback) {
+          continue;
+        }
+        if (_isPrivateLanAddress(address.address)) {
+          candidates.add(address);
+        }
+      }
+    }
+
+    if (candidates.isEmpty) return null;
+    candidates.sort((a, b) => a.address.compareTo(b.address));
+    return candidates.first;
+  }
+
+  bool _looksVirtualInterface(String name) {
+    final normalized = name.toLowerCase();
+    const blockedTokens = [
+      'virtual',
+      'vmware',
+      'hyper-v',
+      'hyperv',
+      'wsl',
+      'docker',
+      'vbox',
+      'vethernet',
+      'vpn',
+      'tun',
+      'tap',
+      'tailscale',
+      'zerotier',
+      'bridge',
+      'loopback',
+      'meta',
+    ];
+    return blockedTokens.any(normalized.contains);
+  }
+
   void _log(String message) {
     if (kDebugMode) {
       debugPrint('[SyncDiscovery] $message');
     }
   }
-}
-
-class _BroadcastAddressCandidate {
-  final String interfaceName;
-  final InternetAddress address;
-
-  _BroadcastAddressCandidate({
-    required this.interfaceName,
-    required this.address,
-  });
 }
