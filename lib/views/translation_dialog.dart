@@ -152,7 +152,10 @@ class _TranslationDialogState extends State<TranslationDialog> {
                 ),
               ),
               SizedBox(height: 12),
-              Text('翻译中…', style: TextStyle(fontSize: 12, color: _kTextSecondary)),
+              Text(
+                '翻译中…',
+                style: TextStyle(fontSize: 12, color: _kTextSecondary),
+              ),
             ],
           ),
         );
@@ -163,7 +166,11 @@ class _TranslationDialogState extends State<TranslationDialog> {
           child: Column(
             mainAxisSize: MainAxisSize.min,
             children: [
-              const Icon(Icons.error_outline, color: Color(0xFFFF3B30), size: 28),
+              const Icon(
+                Icons.error_outline,
+                color: Color(0xFFFF3B30),
+                size: 28,
+              ),
               const SizedBox(height: 10),
               Text(
                 _error,
@@ -174,13 +181,18 @@ class _TranslationDialogState extends State<TranslationDialog> {
               GestureDetector(
                 onTap: _translate,
                 child: Container(
-                  padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 6),
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 16,
+                    vertical: 6,
+                  ),
                   decoration: BoxDecoration(
                     color: _kAccent,
                     borderRadius: BorderRadius.circular(6),
                   ),
-                  child: const Text('重试',
-                      style: TextStyle(fontSize: 12, color: Colors.white)),
+                  child: const Text(
+                    '重试',
+                    style: TextStyle(fontSize: 12, color: Colors.white),
+                  ),
                 ),
               ),
             ],
@@ -258,8 +270,11 @@ class _CloseButtonState extends State<_CloseButton> {
             color: _hovered ? const Color(0xFFE5E5EA) : Colors.transparent,
             borderRadius: BorderRadius.circular(5),
           ),
-          child: Icon(Icons.close_rounded,
-              size: 15, color: _hovered ? _kTextPrimary : _kTextSecondary),
+          child: Icon(
+            Icons.close_rounded,
+            size: 15,
+            color: _hovered ? _kTextPrimary : _kTextSecondary,
+          ),
         ),
       ),
     );
@@ -285,15 +300,19 @@ class _CopyButton extends StatelessWidget {
         child: Row(
           mainAxisSize: MainAxisSize.min,
           children: [
-            Icon(copied ? Icons.check : Icons.copy_outlined,
-                size: 12, color: Colors.white),
+            Icon(
+              copied ? Icons.check : Icons.copy_outlined,
+              size: 12,
+              color: Colors.white,
+            ),
             const SizedBox(width: 4),
             Text(
               copied ? '已复制' : '复制',
               style: const TextStyle(
-                  fontSize: 12,
-                  color: Colors.white,
-                  fontWeight: FontWeight.w500),
+                fontSize: 12,
+                color: Colors.white,
+                fontWeight: FontWeight.w500,
+              ),
             ),
           ],
         ),

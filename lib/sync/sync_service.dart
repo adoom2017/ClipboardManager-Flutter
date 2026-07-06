@@ -10,6 +10,7 @@ import 'sync_connection.dart';
 import 'sync_advertiser.dart';
 import 'sync_discovery.dart';
 import 'sync_message.dart';
+import 'sync_crypto.dart';
 
 class SyncService extends ChangeNotifier {
   static final SyncService instance = SyncService._();
@@ -23,7 +24,8 @@ class SyncService extends ChangeNotifier {
   final SyncDiscovery _discovery = SyncDiscovery();
   final List<DiscoveredPeer> _discoveredPeers = [];
   final Map<String, DateTime> _peerLastSeen = {};
-  List<DiscoveredPeer> get discoveredPeers => List.unmodifiable(_discoveredPeers);
+  List<DiscoveredPeer> get discoveredPeers =>
+      List.unmodifiable(_discoveredPeers);
   StreamSubscription<DiscoveredPeer>? _mdnsPeerSub;
   StreamSubscription<DiscoveredPeer>? _broadcastPeerSub;
   Timer? _peerExpiryTimer;
@@ -31,7 +33,9 @@ class SyncService extends ChangeNotifier {
   Future<void> start() async {
     final settings = SettingsStore();
     _server = await ServerSocket.bind(InternetAddress.anyIPv4, 0);
-    _logInfo('TCP server listening on ${_server!.address.address}:${_server!.port}');
+    _logInfo(
+      'TCP server listening on ${_server!.address.address}:${_server!.port}',
+    );
     _server!.listen(_onIncomingConnection);
 
     await _advertiser.start(
@@ -50,7 +54,10 @@ class SyncService extends ChangeNotifier {
     await _broadcastPeerSub?.cancel();
     _broadcastPeerSub = _discovery.peers.listen(_registerDiscoveredPeer);
     _peerExpiryTimer?.cancel();
-    _peerExpiryTimer = Timer.periodic(_peerCleanupInterval, (_) => _pruneExpiredPeers());
+    _peerExpiryTimer = Timer.periodic(
+      _peerCleanupInterval,
+      (_) => _pruneExpiredPeers(),
+    );
   }
 
   Future<void> stop() async {
@@ -70,7 +77,13 @@ class SyncService extends ChangeNotifier {
 
   Future<void> sendItemToPeer(ClipboardItem item, DiscoveredPeer peer) async {
     if (item.contentType != ClipboardContentType.text) return;
-    _logInfo('sendItemToPeer itemId=${item.id} peerId=${peer.id} displayName=${peer.displayName} host=${peer.host} port=${peer.port}');
+    final settings = SettingsStore();
+    if (settings.syncPin.length != 6) {
+      throw StateError('请先在同步设置中配置 6 位同步 PIN');
+    }
+    _logInfo(
+      'sendItemToPeer itemId=${item.id} peerId=${peer.id} displayName=${peer.displayName} host=${peer.host} port=${peer.port}',
+    );
     final socket = await Socket.connect(peer.host, peer.port);
     final ackCompleter = Completer<void>();
     final conn = SyncConnection(
@@ -87,7 +100,9 @@ class SyncService extends ChangeNotifier {
     late final StreamSubscription<SyncMessage> subscription;
     subscription = conn.messages.listen((msg) async {
       if (msg.type == SyncMessageType.ack) {
-        _logInfo('sync acknowledged peerId=${peer.id} displayName=${peer.displayName}');
+        _logInfo(
+          'sync acknowledged peerId=${peer.id} displayName=${peer.displayName}',
+        );
         if (!ackCompleter.isCompleted) {
           ackCompleter.complete();
         }
@@ -97,12 +112,14 @@ class SyncService extends ChangeNotifier {
     });
 
     try {
-      await conn.send(SyncMessage(
-        type: SyncMessageType.hello,
-        senderId: SettingsStore().syncLocalDeviceId,
-        senderName: _deviceName(),
-      ));
-      await _sendItems(conn, [item]);
+      await conn.send(
+        SyncMessage(
+          type: SyncMessageType.hello,
+          senderId: SettingsStore().syncLocalDeviceId,
+          senderName: _deviceName(),
+        ),
+      );
+      await _sendItems(conn, [item], remoteId: peer.id);
       await ackCompleter.future.timeout(_syncAckTimeout);
     } finally {
       await subscription.cancel();
@@ -111,47 +128,66 @@ class SyncService extends ChangeNotifier {
   }
 
   void _onIncomingConnection(Socket socket) {
-    _logDebug('incoming TCP connection from ${socket.remoteAddress.address}:${socket.remotePort}');
+    _logDebug(
+      'incoming TCP connection from ${socket.remoteAddress.address}:${socket.remotePort}',
+    );
     final conn = SyncConnection(socket, '');
     conn.messages.listen((msg) => _handleMessage(msg, conn));
   }
 
   Future<void> _handleMessage(SyncMessage msg, SyncConnection conn) async {
-    _logDebug('received type=${msg.type.name} senderID=${msg.senderId} senderName=${msg.senderName}');
+    _logDebug(
+      'received type=${msg.type.name} senderID=${msg.senderId} senderName=${msg.senderName}',
+    );
     switch (msg.type) {
       case SyncMessageType.hello:
         break;
       case SyncMessageType.items:
-        final payloadText = _decodePlainPayload(msg.plainPayload);
-        if (payloadText == null) {
-          _logWarn('missing items payload from ${msg.senderId}');
+        final settings = SettingsStore();
+        if (msg.encryptedPayload == null || settings.syncPin.length != 6) {
+          _logWarn('reject unencrypted items payload from ${msg.senderId}');
           await conn.close();
           break;
         }
         try {
+          final key = await SyncCrypto.deriveKey(
+            deviceId1: settings.syncLocalDeviceId,
+            deviceId2: msg.senderId,
+            pin: settings.syncPin,
+          );
+          final payloadText = await SyncCrypto.decrypt(
+            msg.encryptedPayload!,
+            key,
+          );
           final payload = jsonDecode(payloadText) as Map<String, dynamic>;
           final list = (payload['items'] as List<dynamic>? ?? const []);
-          _logInfo('received ${list.length} synced item(s) from ${msg.senderId}');
+          _logInfo(
+            'received ${list.length} synced item(s) from ${msg.senderId}',
+          );
           for (final raw in list) {
             final item = _syncItemFromJson(raw as Map<String, dynamic>);
             await ClipboardStore().addItem(item);
           }
-          await conn.send(SyncMessage(
-            type: SyncMessageType.ack,
-            senderId: SettingsStore().syncLocalDeviceId,
-            senderName: _deviceName(),
-          ));
+          await conn.send(
+            SyncMessage(
+              type: SyncMessageType.ack,
+              senderId: SettingsStore().syncLocalDeviceId,
+              senderName: _deviceName(),
+            ),
+          );
         } catch (error) {
           _logError('failed to apply items from ${msg.senderId}: $error');
         }
         await conn.close();
         break;
       case SyncMessageType.ping:
-        await conn.send(SyncMessage(
-          type: SyncMessageType.pong,
-          senderId: SettingsStore().syncLocalDeviceId,
-          senderName: _deviceName(),
-        ));
+        await conn.send(
+          SyncMessage(
+            type: SyncMessageType.pong,
+            senderId: SettingsStore().syncLocalDeviceId,
+            senderName: _deviceName(),
+          ),
+        );
         break;
       case SyncMessageType.ack:
       case SyncMessageType.pong:
@@ -159,19 +195,34 @@ class SyncService extends ChangeNotifier {
     }
   }
 
-  Future<void> _sendItems(SyncConnection conn, List<ClipboardItem> items) async {
-    final textItems = items.where((item) => item.contentType == ClipboardContentType.text).toList();
+  Future<void> _sendItems(
+    SyncConnection conn,
+    List<ClipboardItem> items, {
+    required String remoteId,
+  }) async {
+    final textItems = items
+        .where((item) => item.contentType == ClipboardContentType.text)
+        .toList();
     if (textItems.isEmpty) return;
     final payload = jsonEncode({
       'items': textItems.map((item) => _syncItemToJson(item)).toList(),
     });
     _logDebug('sending ${textItems.length} item(s)');
-    await conn.send(SyncMessage(
-      type: SyncMessageType.items,
-      senderId: SettingsStore().syncLocalDeviceId,
-      senderName: _deviceName(),
-      plainPayload: _encodePlainPayload(payload),
-    ));
+    final settings = SettingsStore();
+    final key = await SyncCrypto.deriveKey(
+      deviceId1: settings.syncLocalDeviceId,
+      deviceId2: remoteId,
+      pin: settings.syncPin,
+    );
+    final encryptedPayload = await SyncCrypto.encrypt(payload, key);
+    await conn.send(
+      SyncMessage(
+        type: SyncMessageType.items,
+        senderId: settings.syncLocalDeviceId,
+        senderName: _deviceName(),
+        encryptedPayload: encryptedPayload,
+      ),
+    );
   }
 
   String _deviceName() {
@@ -180,10 +231,16 @@ class SyncService extends ChangeNotifier {
 
   void _registerDiscoveredPeer(DiscoveredPeer peer) {
     _peerLastSeen[peer.id] = DateTime.now();
-    final existingIndex = _discoveredPeers.indexWhere((candidate) => candidate.id == peer.id);
+    final existingIndex = _discoveredPeers.indexWhere(
+      (candidate) => candidate.id == peer.id,
+    );
     if (existingIndex >= 0) {
       final previous = _discoveredPeers[existingIndex];
-      final mergedDisplayName = _chooseDisplayName(previous.displayName, peer.displayName, peer.id);
+      final mergedDisplayName = _chooseDisplayName(
+        previous.displayName,
+        peer.displayName,
+        peer.id,
+      );
       final changed = previous.host != peer.host || previous.port != peer.port;
       final updateMessage =
           'update discovered peer id=${peer.id} displayName=$mergedDisplayName oldHost=${previous.host} oldPort=${previous.port} newHost=${peer.host} newPort=${peer.port}';
@@ -199,7 +256,9 @@ class SyncService extends ChangeNotifier {
         port: peer.port,
       );
     } else {
-      _logInfo('add discovered peer id=${peer.id} displayName=${peer.displayName} host=${peer.host} port=${peer.port}');
+      _logInfo(
+        'add discovered peer id=${peer.id} displayName=${peer.displayName} host=${peer.host} port=${peer.port}',
+      );
       _discoveredPeers.add(peer);
     }
     notifyListeners();
@@ -226,26 +285,15 @@ class SyncService extends ChangeNotifier {
     _discovery.boostDiscovery();
   }
 
-  String _encodePlainPayload(String value) {
-    return base64.encode(utf8.encode(value));
-  }
-
-  String? _decodePlainPayload(String? value) {
-    if (value == null) return null;
-    try {
-      return utf8.decode(base64.decode(value));
-    } catch (_) {
-      return value;
-    }
-  }
-
   Map<String, dynamic> _syncItemToJson(ClipboardItem item) => {
-        'id': item.id,
-        'content': item.content,
-        'timestamp': item.timestamp.toUtc().difference(_appleReferenceDate).inMilliseconds / 1000.0,
-        'sourceApp': item.sourceApp,
-        'isPinned': item.isPinned,
-      };
+    'id': item.id,
+    'content': item.content,
+    'timestamp':
+        item.timestamp.toUtc().difference(_appleReferenceDate).inMilliseconds /
+        1000.0,
+    'sourceApp': item.sourceApp,
+    'isPinned': item.isPinned,
+  };
 
   ClipboardItem _syncItemFromJson(Map<String, dynamic> json) {
     final timestamp = json['timestamp'];
@@ -271,14 +319,22 @@ class SyncService extends ChangeNotifier {
     return DateTime.now().toUtc();
   }
 
-  String _chooseDisplayName(String current, String incoming, String fallbackId) {
+  String _chooseDisplayName(
+    String current,
+    String incoming,
+    String fallbackId,
+  ) {
     if (_isBetterDisplayName(current, incoming, fallbackId)) {
       return incoming;
     }
     return current;
   }
 
-  bool _isBetterDisplayName(String current, String incoming, String fallbackId) {
+  bool _isBetterDisplayName(
+    String current,
+    String incoming,
+    String fallbackId,
+  ) {
     final normalizedCurrent = current.trim();
     final normalizedIncoming = incoming.trim();
     if (normalizedCurrent.isEmpty) return normalizedIncoming.isNotEmpty;
@@ -290,10 +346,14 @@ class SyncService extends ChangeNotifier {
     return false;
   }
 
-  void _logDebug(String message) => AppLogger.instance.debug('SyncService', message);
-  void _logInfo(String message) => AppLogger.instance.info('SyncService', message);
-  void _logWarn(String message) => AppLogger.instance.warn('SyncService', message);
-  void _logError(String message) => AppLogger.instance.error('SyncService', message);
+  void _logDebug(String message) =>
+      AppLogger.instance.debug('SyncService', message);
+  void _logInfo(String message) =>
+      AppLogger.instance.info('SyncService', message);
+  void _logWarn(String message) =>
+      AppLogger.instance.warn('SyncService', message);
+  void _logError(String message) =>
+      AppLogger.instance.error('SyncService', message);
 }
 
 final DateTime _appleReferenceDate = DateTime.utc(2001, 1, 1);

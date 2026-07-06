@@ -2,13 +2,37 @@ import 'dart:convert';
 import 'package:http/http.dart' as http;
 
 class TranslationService {
+  /// Removes reasoning traces emitted by some reasoning models.
+  static String sanitizeModelOutput(String text) {
+    var result = text.replaceAll(
+      RegExp(
+        r'<think\b[^>]*>.*?</think\s*>',
+        caseSensitive: false,
+        dotAll: true,
+      ),
+      '',
+    );
+    result = result.replaceAll(
+      RegExp(r'<think\b[^>]*>.*$', caseSensitive: false, dotAll: true),
+      '',
+    );
+    result = result.replaceAll(
+      RegExp(r'</?think\b[^>]*>', caseSensitive: false),
+      '',
+    );
+    return result.trim();
+  }
+
   /// Returns true if [text] is predominantly Chinese/CJK.
   static bool _isChinese(String text) {
-    final cjkCount = text.runes.where((r) =>
-        (r >= 0x4E00 && r <= 0x9FFF) || // CJK Unified Ideographs
-        (r >= 0x3400 && r <= 0x4DBF) || // CJK Extension A
-        (r >= 0x20000 && r <= 0x2A6DF)  // CJK Extension B
-    ).length;
+    final cjkCount = text.runes
+        .where(
+          (r) =>
+              (r >= 0x4E00 && r <= 0x9FFF) || // CJK Unified Ideographs
+              (r >= 0x3400 && r <= 0x4DBF) || // CJK Extension A
+              (r >= 0x20000 && r <= 0x2A6DF), // CJK Extension B
+        )
+        .length;
     return cjkCount > text.length * 0.1;
   }
 
@@ -42,8 +66,20 @@ class TranslationService {
 
     final isGemini = apiUrl.contains('generativelanguage.googleapis.com');
     return isGemini
-        ? _callGemini(text, systemPrompt, apiUrl: apiUrl, apiKey: apiKey, model: model)
-        : _callOpenAI(text, systemPrompt, apiUrl: apiUrl, apiKey: apiKey, model: model);
+        ? _callGemini(
+            text,
+            systemPrompt,
+            apiUrl: apiUrl,
+            apiKey: apiKey,
+            model: model,
+          )
+        : _callOpenAI(
+            text,
+            systemPrompt,
+            apiUrl: apiUrl,
+            apiKey: apiKey,
+            model: model,
+          );
   }
 
   // ─── OpenAI-compatible ────────────────────────────────────────────────────
@@ -55,35 +91,44 @@ class TranslationService {
     required String apiKey,
     required String model,
   }) async {
-    final base = apiUrl.endsWith('/') ? apiUrl.substring(0, apiUrl.length - 1) : apiUrl;
+    final base = apiUrl.endsWith('/')
+        ? apiUrl.substring(0, apiUrl.length - 1)
+        : apiUrl;
     final uri = Uri.parse('$base/chat/completions');
 
-    final response = await http.post(
-      uri,
-      headers: {
-        'Content-Type': 'application/json',
-        'Authorization': 'Bearer $apiKey',
-      },
-      body: jsonEncode({
-        'model': model,
-        'messages': [
-          {'role': 'system', 'content': systemPrompt},
-          {'role': 'user', 'content': text},
-        ],
-        'temperature': 0.3,
-        'max_tokens': 2048,
-      }),
-    ).timeout(const Duration(seconds: 30));
+    final response = await http
+        .post(
+          uri,
+          headers: {
+            'Content-Type': 'application/json',
+            'Authorization': 'Bearer $apiKey',
+          },
+          body: jsonEncode({
+            'model': model,
+            'messages': [
+              {'role': 'system', 'content': systemPrompt},
+              {'role': 'user', 'content': text},
+            ],
+            'temperature': 0.3,
+            'max_tokens': 2048,
+          }),
+        )
+        .timeout(const Duration(seconds: 30));
 
     if (response.statusCode != 200) {
-      throw Exception('API 错误 ${response.statusCode}: ${_extractError(response.body)}');
+      throw Exception(
+        'API 错误 ${response.statusCode}: ${_extractError(response.body)}',
+      );
     }
 
     final json = jsonDecode(response.body) as Map<String, dynamic>;
-    final content = (json['choices'] as List<dynamic>?)
-        ?.firstOrNull?['message']?['content'] as String?;
+    final content =
+        (json['choices'] as List<dynamic>?)?.firstOrNull?['message']?['content']
+            as String?;
     if (content == null || content.isEmpty) throw Exception('返回内容为空');
-    return content.trim();
+    final result = sanitizeModelOutput(content);
+    if (result.isEmpty) throw Exception('返回内容为空');
+    return result;
   }
 
   // ─── Google Gemini ────────────────────────────────────────────────────────
@@ -95,37 +140,50 @@ class TranslationService {
     required String apiKey,
     required String model,
   }) async {
-    final base = apiUrl.endsWith('/') ? apiUrl.substring(0, apiUrl.length - 1) : apiUrl;
-    final uri = Uri.parse('$base/v1beta/models/$model:generateContent?key=$apiKey');
+    final base = apiUrl.endsWith('/')
+        ? apiUrl.substring(0, apiUrl.length - 1)
+        : apiUrl;
+    final uri = Uri.parse(
+      '$base/v1beta/models/$model:generateContent?key=$apiKey',
+    );
 
-    final response = await http.post(
-      uri,
-      headers: {'Content-Type': 'application/json'},
-      body: jsonEncode({
-        'system_instruction': {
-          'parts': [{'text': systemPrompt}]
-        },
-        'contents': [
-          {
-            'parts': [{'text': text}]
-          }
-        ],
-        'generationConfig': {
-          'temperature': 0.3,
-          'maxOutputTokens': 2048,
-        },
-      }),
-    ).timeout(const Duration(seconds: 30));
+    final response = await http
+        .post(
+          uri,
+          headers: {'Content-Type': 'application/json'},
+          body: jsonEncode({
+            'system_instruction': {
+              'parts': [
+                {'text': systemPrompt},
+              ],
+            },
+            'contents': [
+              {
+                'parts': [
+                  {'text': text},
+                ],
+              },
+            ],
+            'generationConfig': {'temperature': 0.3, 'maxOutputTokens': 2048},
+          }),
+        )
+        .timeout(const Duration(seconds: 30));
 
     if (response.statusCode != 200) {
-      throw Exception('Gemini 错误 ${response.statusCode}: ${_extractError(response.body)}');
+      throw Exception(
+        'Gemini 错误 ${response.statusCode}: ${_extractError(response.body)}',
+      );
     }
 
     final json = jsonDecode(response.body) as Map<String, dynamic>;
-    final content = (json['candidates'] as List<dynamic>?)
-        ?.firstOrNull?['content']?['parts']?[0]?['text'] as String?;
+    final content =
+        (json['candidates'] as List<dynamic>?)
+                ?.firstOrNull?['content']?['parts']?[0]?['text']
+            as String?;
     if (content == null || content.isEmpty) throw Exception('Gemini 返回内容为空');
-    return content.trim();
+    final result = sanitizeModelOutput(content);
+    if (result.isEmpty) throw Exception('Gemini 返回内容为空');
+    return result;
   }
 
   // ─── Helpers ──────────────────────────────────────────────────────────────

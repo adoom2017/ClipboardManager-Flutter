@@ -57,7 +57,9 @@ class SyncAdvertiser {
     _logInfo('selectedIPv4=${_ipv4Addresses.map((e) => e.address).join(", ")}');
 
     if (_ipv4Addresses.isEmpty) {
-      _logWarn('no eligible private IPv4 address found; mDNS advertisement disabled');
+      _logWarn(
+        'no eligible private IPv4 address found; mDNS advertisement disabled',
+      );
       return;
     }
 
@@ -72,7 +74,9 @@ class SyncAdvertiser {
     } on SocketException {
       // If another mDNS responder already owns the port we keep the app usable
       // and fall back to the UDP broadcast discovery path.
-      _logWarn('failed to bind UDP/5353; falling back to broadcast discovery only');
+      _logWarn(
+        'failed to bind UDP/5353; falling back to broadcast discovery only',
+      );
       return;
     }
 
@@ -144,7 +148,9 @@ class SyncAdvertiser {
     final candidates = <_AdvertiseAddressCandidate>[];
     for (final interface in interfaces) {
       for (final address in interface.addresses) {
-        if (address.type != InternetAddressType.IPv4 || address.isLoopback) continue;
+        if (address.type != InternetAddressType.IPv4 || address.isLoopback) {
+          continue;
+        }
         if (!_isPrivateLanAddress(address.address)) continue;
         if (_looksVirtualInterface(interface.name)) continue;
 
@@ -160,8 +166,9 @@ class SyncAdvertiser {
     if (candidates.isEmpty) return const [];
 
     candidates.sort((a, b) {
-      final scoreCompare = _interfacePriority(b.interfaceName)
-          .compareTo(_interfacePriority(a.interfaceName));
+      final scoreCompare = _interfacePriority(
+        b.interfaceName,
+      ).compareTo(_interfacePriority(a.interfaceName));
       if (scoreCompare != 0) return scoreCompare;
       return a.address.address.compareTo(b.address.address);
     });
@@ -224,7 +231,9 @@ class SyncAdvertiser {
 
   int _interfacePriority(String name) {
     final normalized = name.toLowerCase();
-    if (normalized.contains('wi-fi') || normalized.contains('wifi') || normalized.contains('wlan')) {
+    if (normalized.contains('wi-fi') ||
+        normalized.contains('wifi') ||
+        normalized.contains('wlan')) {
       return 3;
     }
     if (normalized.contains('ethernet') || normalized.startsWith('en')) {
@@ -246,7 +255,9 @@ class SyncAdvertiser {
   void _handleQuery(Datagram datagram) {
     final query = _decodeMdnsQuery(datagram.data);
     if (query == null) return;
-    _logDebug('received mDNS query type=${query.resourceRecordType} name=${query.fullyQualifiedName} from=${datagram.address.address}:${datagram.port}');
+    _logDebug(
+      'received mDNS query type=${query.resourceRecordType} name=${query.fullyQualifiedName} from=${datagram.address.address}:${datagram.port}',
+    );
 
     final answers = <_DnsRecord>[];
     final additionals = <_DnsRecord>[];
@@ -331,7 +342,9 @@ class SyncAdvertiser {
     final packet = _decodeMdnsPacket(datagram.data);
     if (packet == null) return;
     if (!packet.isResponse || packet.answers.isEmpty) return;
-    _logDebug('received mDNS response answers=${packet.answers.length} from=${datagram.address.address}:${datagram.port}');
+    _logDebug(
+      'received mDNS response answers=${packet.answers.length} from=${datagram.address.address}:${datagram.port}',
+    );
 
     final ptrTargets = <String>{};
     final srvRecords = <String, _SrvRecordData>{};
@@ -360,16 +373,21 @@ class SyncAdvertiser {
             answer.dataOffset + 6,
           )?.name;
           if (target != null) {
-            _logDebug('SRV answer name=${answer.name} target=$target port=$port');
-            srvRecords[answer.name.toLowerCase()] =
-                _SrvRecordData(target: target, port: port);
+            _logDebug(
+              'SRV answer name=${answer.name} target=$target port=$port',
+            );
+            srvRecords[answer.name.toLowerCase()] = _SrvRecordData(
+              target: target,
+              port: port,
+            );
           }
           break;
         case _resourceRecordTypeAddressIPv4:
           if (answer.dataLength != 4) continue;
           final address = InternetAddress.fromRawAddress(
-              packet.rawData.sublist(answer.dataOffset, answer.dataOffset + 4),
-              type: InternetAddressType.IPv4);
+            packet.rawData.sublist(answer.dataOffset, answer.dataOffset + 4),
+            type: InternetAddressType.IPv4,
+          );
           _logDebug('A answer name=${answer.name} address=${address.address}');
           aRecords[answer.name.toLowerCase()] = address;
           break;
@@ -396,7 +414,9 @@ class SyncAdvertiser {
         host: ip.address,
         port: srv.port,
       );
-      _logDebug('mDNS peer discovered id=${peer.id} host=${peer.host} port=${peer.port}');
+      _logDebug(
+        'mDNS peer discovered id=${peer.id} host=${peer.host} port=${peer.port}',
+      );
       _peerCtrl.add(peer);
     }
   }
@@ -440,7 +460,9 @@ class SyncAdvertiser {
   }
 
   Uint8List _encodeDnsName(String name) {
-    final normalized = name.endsWith('.') ? name.substring(0, name.length - 1) : name;
+    final normalized = name.endsWith('.')
+        ? name.substring(0, name.length - 1)
+        : name;
     final builder = BytesBuilder();
     for (final part in normalized.split('.')) {
       final bytes = utf8.encode(part);
@@ -452,7 +474,9 @@ class SyncAdvertiser {
   }
 
   String _friendlyDisplayName(String raw, {required String fallback}) {
-    final normalized = raw.endsWith('.') ? raw.substring(0, raw.length - 1) : raw;
+    final normalized = raw.endsWith('.')
+        ? raw.substring(0, raw.length - 1)
+        : raw;
     final firstLabel = normalized.split('.').first.trim();
     if (firstLabel.isEmpty) return fallback;
     return firstLabel;
@@ -479,10 +503,7 @@ class SyncAdvertiser {
       type: _resourceRecordTypeService,
       recordClass: _resourceRecordClassInternet,
       ttl: _mdnsTtlSeconds,
-      data: Uint8List.fromList([
-        ...data.buffer.asUint8List(),
-        ...targetName,
-      ]),
+      data: Uint8List.fromList([...data.buffer.asUint8List(), ...targetName]),
     );
   }
 
@@ -581,14 +602,16 @@ class SyncAdvertiser {
       offset = dataOffset + dataLength;
       if (offset > data.length) return null;
 
-      answers.add(_DecodedResourceRecord(
-        name: nameResult.name,
-        type: type,
-        recordClass: recordClass,
-        ttl: ttl,
-        dataOffset: dataOffset,
-        dataLength: dataLength,
-      ));
+      answers.add(
+        _DecodedResourceRecord(
+          name: nameResult.name,
+          type: type,
+          recordClass: recordClass,
+          ttl: ttl,
+          dataOffset: dataOffset,
+          dataLength: dataLength,
+        ),
+      );
     }
 
     return _DecodedDnsPacket(
@@ -635,7 +658,12 @@ class SyncAdvertiser {
       }
 
       if (offset + length > data.length) return null;
-      parts.add(utf8.decode(data.sublist(offset, offset + length), allowMalformed: true));
+      parts.add(
+        utf8.decode(
+          data.sublist(offset, offset + length),
+          allowMalformed: true,
+        ),
+      );
       offset += length;
       consumed += length;
     }
@@ -643,9 +671,12 @@ class SyncAdvertiser {
     return null;
   }
 
-  void _logDebug(String message) => AppLogger.instance.debug('SyncAdvertiser', message);
-  void _logInfo(String message) => AppLogger.instance.info('SyncAdvertiser', message);
-  void _logWarn(String message) => AppLogger.instance.warn('SyncAdvertiser', message);
+  void _logDebug(String message) =>
+      AppLogger.instance.debug('SyncAdvertiser', message);
+  void _logInfo(String message) =>
+      AppLogger.instance.info('SyncAdvertiser', message);
+  void _logWarn(String message) =>
+      AppLogger.instance.warn('SyncAdvertiser', message);
 }
 
 class _DnsRecord {
@@ -697,10 +728,7 @@ class _DecodedResourceRecord {
 }
 
 class _SrvRecordData {
-  const _SrvRecordData({
-    required this.target,
-    required this.port,
-  });
+  const _SrvRecordData({required this.target, required this.port});
 
   final String target;
   final int port;

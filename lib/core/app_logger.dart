@@ -40,25 +40,39 @@ class AppLogger {
       unawaited(_enqueue(_cleanup));
     });
     _initialized = true;
-    info('Logger', 'initialized path=${_logsDirectory?.path ?? "unknown"} level=${minimumLevel.label}');
+    info(
+      'Logger',
+      'initialized path=${_logsDirectory?.path ?? "unknown"} level=${minimumLevel.label}',
+    );
   }
 
-  void debug(String category, String message) => log(AppLogLevel.debug, category, message);
-  void info(String category, String message) => log(AppLogLevel.info, category, message);
-  void warn(String category, String message) => log(AppLogLevel.warn, category, message);
-  void error(String category, String message) => log(AppLogLevel.error, category, message);
+  void debug(String category, String message) =>
+      log(AppLogLevel.debug, category, message);
+  void info(String category, String message) =>
+      log(AppLogLevel.info, category, message);
+  void warn(String category, String message) =>
+      log(AppLogLevel.warn, category, message);
+  void error(String category, String message) =>
+      log(AppLogLevel.error, category, message);
 
   void log(AppLogLevel level, String category, String message) {
     if (level.priority < minimumLevel.priority) return;
-    final line = '${DateTime.now().toUtc().toIso8601String()} [${level.label}] [$category] $message';
+    final line =
+        '${DateTime.now().toUtc().toIso8601String()} [${level.label}] [$category] $message';
     stdout.writeln(line);
     if (!_initialized) return;
 
-    unawaited(_enqueue(() async {
-      await _prepare();
-      await _rotateIfNeeded(line.length + 1);
-      await _currentLogFile!.writeAsString('$line\n', mode: FileMode.append, flush: false);
-    }));
+    unawaited(
+      _enqueue(() async {
+        await _prepare();
+        await _rotateIfNeeded(line.length + 1);
+        await _currentLogFile!.writeAsString(
+          '$line\n',
+          mode: FileMode.append,
+          flush: false,
+        );
+      }),
+    );
   }
 
   Future<void> dispose() async {
@@ -76,12 +90,16 @@ class AppLogger {
     if (_logsDirectory != null && _currentLogFile != null) return;
 
     final appSupport = await getApplicationSupportDirectory();
-    final logsDir = Directory('${appSupport.path}${Platform.pathSeparator}Logs');
+    final logsDir = Directory(
+      '${appSupport.path}${Platform.pathSeparator}Logs',
+    );
     if (!await logsDir.exists()) {
       await logsDir.create(recursive: true);
     }
 
-    final currentFile = File('${logsDir.path}${Platform.pathSeparator}$_logFileName');
+    final currentFile = File(
+      '${logsDir.path}${Platform.pathSeparator}$_logFileName',
+    );
     if (!await currentFile.exists()) {
       await currentFile.create(recursive: true);
     }
@@ -98,11 +116,13 @@ class AppLogger {
     final currentSize = await file.length();
     if (currentSize + additionalBytes <= _maxFileSizeBytes) return;
 
-    final timestamp = DateTime.now()
-        .toUtc()
-        .toIso8601String()
-        .replaceAll(':', '-');
-    final rotated = File('${dir.path}${Platform.pathSeparator}app-$timestamp.log');
+    final timestamp = DateTime.now().toUtc().toIso8601String().replaceAll(
+      ':',
+      '-',
+    );
+    final rotated = File(
+      '${dir.path}${Platform.pathSeparator}app-$timestamp.log',
+    );
     if (await rotated.exists()) {
       await rotated.delete();
     }
@@ -118,7 +138,11 @@ class AppLogger {
 
     final now = DateTime.now();
     final retentionCutoff = now.subtract(const Duration(days: _retentionDays));
-    final entries = await dir.list().where((entry) => entry is File).cast<File>().toList();
+    final entries = await dir
+        .list()
+        .where((entry) => entry is File)
+        .cast<File>()
+        .toList();
 
     final fileInfos = <_LogFileInfo>[];
     for (final file in entries) {

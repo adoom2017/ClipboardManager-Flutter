@@ -53,13 +53,20 @@ class _SyncPageState extends State<SyncPage> {
                     color: _kAccent.withValues(alpha: 0.12),
                     borderRadius: BorderRadius.circular(8),
                   ),
-                  child: const Icon(Icons.laptop_windows, size: 20, color: _kAccent),
+                  child: const Icon(
+                    Icons.laptop_windows,
+                    size: 20,
+                    color: _kAccent,
+                  ),
                 ),
                 const SizedBox(width: 12),
                 Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    const Text('Windows 设备', style: TextStyle(fontSize: 13, color: _kTextPrimary)),
+                    const Text(
+                      'Windows 设备',
+                      style: TextStyle(fontSize: 13, color: _kTextPrimary),
+                    ),
                     Text(
                       settings.syncLocalDeviceId.length > 8
                           ? '${settings.syncLocalDeviceId.substring(0, 8)}…'
@@ -80,8 +87,12 @@ class _SyncPageState extends State<SyncPage> {
         Padding(
           padding: const EdgeInsets.symmetric(horizontal: 16),
           child: Text(
-            '设备会在局域网内自动发现。点击剪贴板条目的同步按钮时，应用会临时连接目标设备并发送该条文本内容。',
-            style: const TextStyle(fontSize: 13, color: _kTextSecondary, height: 1.4),
+            '设备会在局域网内自动发现。请先在设置中为两端配置相同的 6 位 PIN，文本将通过 AES-GCM 加密传输。',
+            style: const TextStyle(
+              fontSize: 13,
+              color: _kTextSecondary,
+              height: 1.4,
+            ),
           ),
         ),
         const SizedBox(height: 20),
@@ -94,10 +105,16 @@ class _SyncPageState extends State<SyncPage> {
                   SizedBox(
                     width: 14,
                     height: 14,
-                    child: CircularProgressIndicator(strokeWidth: 1.5, color: _kTextSecondary),
+                    child: CircularProgressIndicator(
+                      strokeWidth: 1.5,
+                      color: _kTextSecondary,
+                    ),
                   ),
                   SizedBox(width: 10),
-                  Text('正在扫描局域网…', style: TextStyle(fontSize: 13, color: _kTextSecondary)),
+                  Text(
+                    '正在扫描局域网…',
+                    style: TextStyle(fontSize: 13, color: _kTextSecondary),
+                  ),
                 ],
               ),
             )
@@ -105,7 +122,12 @@ class _SyncPageState extends State<SyncPage> {
             for (int i = 0; i < discovered.length; i++) ...[
               _PeerRow(peer: discovered[i]),
               if (i < discovered.length - 1)
-                const Divider(height: 1, thickness: 0.5, indent: 16, color: _kSeparator),
+                const Divider(
+                  height: 1,
+                  thickness: 0.5,
+                  indent: 16,
+                  color: _kSeparator,
+                ),
             ],
         ]),
       ],
@@ -165,14 +187,21 @@ class _PeerRow extends StatelessWidget {
               color: const Color(0xFFE8F5E9),
               borderRadius: BorderRadius.circular(7),
             ),
-            child: const Icon(Icons.devices, size: 17, color: Color(0xFF34C759)),
+            child: const Icon(
+              Icons.devices,
+              size: 17,
+              color: Color(0xFF34C759),
+            ),
           ),
           const SizedBox(width: 10),
           Expanded(
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                Text(peer.displayName, style: const TextStyle(fontSize: 13, color: _kTextPrimary)),
+                Text(
+                  peer.displayName,
+                  style: const TextStyle(fontSize: 13, color: _kTextPrimary),
+                ),
                 Text(
                   '${peer.host}:${peer.port}',
                   style: const TextStyle(fontSize: 11, color: _kTextSecondary),

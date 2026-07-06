@@ -71,7 +71,11 @@ class ClipboardMonitor {
       final pid = pidPtr.value;
       calloc.free(pidPtr);
 
-      final hProcess = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, FALSE, pid);
+      final hProcess = OpenProcess(
+        PROCESS_QUERY_LIMITED_INFORMATION,
+        FALSE,
+        pid,
+      );
       if (hProcess == 0) return 'Unknown';
 
       final nameBuf = wsalloc(MAX_PATH);

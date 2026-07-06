@@ -69,11 +69,23 @@ class _SettingsBody extends StatelessWidget {
           ),
         ]),
         const SizedBox(height: 20),
-        _section('数据', [
-          _DestructiveRow(
-            label: '清空所有历史',
-            onTap: (ctx) => _confirmClear(ctx),
+        _section('同步', [
+          _row(
+            label: '同步 PIN',
+            subtitle: '两台设备填写相同的 6 位数字 PIN',
+            trailing: const SizedBox.shrink(),
           ),
+          _fullRow(
+            child: _PasswordField(
+              value: s.syncPin,
+              hint: '6 位数字',
+              onChanged: s.setSyncPin,
+            ),
+          ),
+        ]),
+        const SizedBox(height: 20),
+        _section('数据', [
+          _DestructiveRow(label: '清空所有历史', onTap: (ctx) => _confirmClear(ctx)),
         ]),
         const SizedBox(height: 20),
         _section('翻译', [
@@ -89,10 +101,7 @@ class _SettingsBody extends StatelessWidget {
               onChanged: s.setTranslationApiUrl,
             ),
           ),
-          _row(
-            label: 'API Key',
-            trailing: const SizedBox.shrink(),
-          ),
+          _row(label: 'API Key', trailing: const SizedBox.shrink()),
           _fullRow(
             child: _PasswordField(
               value: s.translationApiKey,
@@ -100,10 +109,7 @@ class _SettingsBody extends StatelessWidget {
               onChanged: s.setTranslationApiKey,
             ),
           ),
-          _row(
-            label: '模型',
-            trailing: const SizedBox.shrink(),
-          ),
+          _row(label: '模型', trailing: const SizedBox.shrink()),
           _fullRow(
             child: _SettingsTextField(
               value: s.translationModel,
@@ -164,7 +170,11 @@ class _SettingsBody extends StatelessWidget {
     );
   }
 
-  Widget _row({required String label, String? subtitle, required Widget trailing}) {
+  Widget _row({
+    required String label,
+    String? subtitle,
+    required Widget trailing,
+  }) {
     return Padding(
       padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
       child: Row(
@@ -173,15 +183,20 @@ class _SettingsBody extends StatelessWidget {
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                Text(label,
-                    style:
-                        const TextStyle(fontSize: 14, color: _kTextPrimary)),
+                Text(
+                  label,
+                  style: const TextStyle(fontSize: 14, color: _kTextPrimary),
+                ),
                 if (subtitle != null)
                   Padding(
                     padding: const EdgeInsets.only(top: 2),
-                    child: Text(subtitle,
-                        style: const TextStyle(
-                            fontSize: 11, color: _kTextSecondary)),
+                    child: Text(
+                      subtitle,
+                      style: const TextStyle(
+                        fontSize: 11,
+                        color: _kTextSecondary,
+                      ),
+                    ),
                   ),
               ],
             ),
@@ -210,29 +225,37 @@ class _SettingsBody extends StatelessWidget {
           child: Column(
             mainAxisSize: MainAxisSize.min,
             children: [
-              const Text('清空历史',
-                  style: TextStyle(
-                      fontWeight: FontWeight.w600,
-                      fontSize: 14,
-                      color: _kTextPrimary)),
+              const Text(
+                '清空历史',
+                style: TextStyle(
+                  fontWeight: FontWeight.w600,
+                  fontSize: 14,
+                  color: _kTextPrimary,
+                ),
+              ),
               const SizedBox(height: 8),
-              const Text('确认删除所有剪贴板历史？\n此操作无法撤销。',
-                  textAlign: TextAlign.center,
-                  style:
-                      TextStyle(fontSize: 12, color: _kTextSecondary)),
+              const Text(
+                '确认删除所有剪贴板历史？\n此操作无法撤销。',
+                textAlign: TextAlign.center,
+                style: TextStyle(fontSize: 12, color: _kTextSecondary),
+              ),
               const SizedBox(height: 16),
               Row(
                 mainAxisAlignment: MainAxisAlignment.center,
                 children: [
-                  _btn('取消',
-                      bg: const Color(0xFFE5E5EA),
-                      fg: _kTextPrimary,
-                      onTap: () => Navigator.pop(ctx, false)),
+                  _btn(
+                    '取消',
+                    bg: const Color(0xFFE5E5EA),
+                    fg: _kTextPrimary,
+                    onTap: () => Navigator.pop(ctx, false),
+                  ),
                   const SizedBox(width: 8),
-                  _btn('清空',
-                      bg: const Color(0xFFFF3B30),
-                      fg: Colors.white,
-                      onTap: () => Navigator.pop(ctx, true)),
+                  _btn(
+                    '清空',
+                    bg: const Color(0xFFFF3B30),
+                    fg: Colors.white,
+                    onTap: () => Navigator.pop(ctx, true),
+                  ),
                 ],
               ),
             ],
@@ -243,21 +266,28 @@ class _SettingsBody extends StatelessWidget {
     if (ok == true) await ClipboardStore().clearAll();
   }
 
-  Widget _btn(String label,
-      {required Color bg,
-      required Color fg,
-      required VoidCallback onTap}) {
+  Widget _btn(
+    String label, {
+    required Color bg,
+    required Color fg,
+    required VoidCallback onTap,
+  }) {
     return GestureDetector(
       onTap: onTap,
       child: Container(
         padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 7),
-        decoration:
-            BoxDecoration(color: bg, borderRadius: BorderRadius.circular(6)),
-        child: Text(label,
-            style: TextStyle(
-                fontSize: 13,
-                fontWeight: FontWeight.w500,
-                color: fg)),
+        decoration: BoxDecoration(
+          color: bg,
+          borderRadius: BorderRadius.circular(6),
+        ),
+        child: Text(
+          label,
+          style: TextStyle(
+            fontSize: 13,
+            fontWeight: FontWeight.w500,
+            color: fg,
+          ),
+        ),
       ),
     );
   }
@@ -286,8 +316,7 @@ class _NumberFieldState extends State<_NumberField> {
   @override
   void didUpdateWidget(_NumberField old) {
     super.didUpdateWidget(old);
-    if (old.value != widget.value &&
-        _ctrl.text != widget.value.toString()) {
+    if (old.value != widget.value && _ctrl.text != widget.value.toString()) {
       _ctrl.text = widget.value.toString();
     }
   }
@@ -306,12 +335,13 @@ class _NumberFieldState extends State<_NumberField> {
         controller: _ctrl,
         textAlign: TextAlign.center,
         keyboardType: TextInputType.number,
-        style:
-            const TextStyle(fontSize: 13, color: _kTextPrimary),
+        style: const TextStyle(fontSize: 13, color: _kTextPrimary),
         decoration: InputDecoration(
           isDense: true,
-          contentPadding:
-              const EdgeInsets.symmetric(horizontal: 8, vertical: 6),
+          contentPadding: const EdgeInsets.symmetric(
+            horizontal: 8,
+            vertical: 6,
+          ),
           filled: true,
           fillColor: const Color(0xFFF2F2F7),
           border: OutlineInputBorder(
@@ -361,19 +391,16 @@ class _DestructiveRowState extends State<_DestructiveRow> {
         onTap: () => widget.onTap(context),
         child: AnimatedContainer(
           duration: const Duration(milliseconds: 100),
-          color: _hovered
-              ? const Color(0xFFFFEBEB)
-              : Colors.transparent,
-          padding:
-              const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+          color: _hovered ? const Color(0xFFFFEBEB) : Colors.transparent,
+          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
           child: Row(
             children: [
-              Icon(Icons.delete_outline,
-                  size: 16, color: red),
+              Icon(Icons.delete_outline, size: 16, color: red),
               const SizedBox(width: 8),
-              Text(widget.label,
-                  style:
-                      const TextStyle(fontSize: 14, color: red)),
+              Text(
+                widget.label,
+                style: const TextStyle(fontSize: 14, color: red),
+              ),
             ],
           ),
         ),
@@ -388,7 +415,11 @@ class _SettingsTextField extends StatefulWidget {
   final String value;
   final String hint;
   final ValueChanged<String> onChanged;
-  const _SettingsTextField({required this.value, required this.hint, required this.onChanged});
+  const _SettingsTextField({
+    required this.value,
+    required this.hint,
+    required this.onChanged,
+  });
 
   @override
   State<_SettingsTextField> createState() => _SettingsTextFieldState();
@@ -453,7 +484,11 @@ class _PasswordField extends StatefulWidget {
   final String value;
   final String hint;
   final ValueChanged<String> onChanged;
-  const _PasswordField({required this.value, required this.hint, required this.onChanged});
+  const _PasswordField({
+    required this.value,
+    required this.hint,
+    required this.onChanged,
+  });
 
   @override
   State<_PasswordField> createState() => _PasswordFieldState();
@@ -511,7 +546,9 @@ class _PasswordFieldState extends State<_PasswordField> {
         suffixIcon: GestureDetector(
           onTap: () => setState(() => _obscure = !_obscure),
           child: Icon(
-            _obscure ? Icons.visibility_outlined : Icons.visibility_off_outlined,
+            _obscure
+                ? Icons.visibility_outlined
+                : Icons.visibility_off_outlined,
             size: 16,
             color: _kTextSecondary,
           ),

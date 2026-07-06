@@ -77,7 +77,9 @@ class ClipboardStore extends ChangeNotifier {
     if (retainDays <= 0) return; // 0 means keep forever
     final cutoff = DateTime.now().toUtc().subtract(Duration(days: retainDays));
     final before = _items.length;
-    _items.removeWhere((e) => !e.isPinned && e.timestamp.toUtc().isBefore(cutoff));
+    _items.removeWhere(
+      (e) => !e.isPinned && e.timestamp.toUtc().isBefore(cutoff),
+    );
     if (_items.length != before) {
       notifyListeners();
       if (save) _persistence.save(_items);
@@ -102,4 +104,3 @@ class ClipboardStore extends ChangeNotifier {
     });
   }
 }
-

@@ -23,9 +23,11 @@ class AutoPasteService {
     }
 
     final user32 = DynamicLibrary.open('user32.dll');
-    final keybdEvent = user32.lookupFunction<
-        Void Function(Uint8, Uint8, Uint32, IntPtr),
-        void Function(int, int, int, int)>('keybd_event');
+    final keybdEvent = user32
+        .lookupFunction<
+          Void Function(Uint8, Uint8, Uint32, IntPtr),
+          void Function(int, int, int, int)
+        >('keybd_event');
 
     // Restore focus to the window that was active before we popped up
     if (previousForegroundWindow != 0) {

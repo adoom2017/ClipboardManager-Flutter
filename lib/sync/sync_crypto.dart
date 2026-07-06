@@ -4,7 +4,7 @@ import 'dart:typed_data';
 import 'package:cryptography/cryptography.dart';
 
 /// HKDF-SHA256 key derivation + AES-GCM-256 encryption/decryption.
-/// Compatible with the C# implementation's scheme.
+/// Compatible with the macOS implementation's scheme.
 class SyncCrypto {
   static final _aesGcm = AesGcm.with256bits();
   static final _hkdf = Hkdf(hmac: Hmac.sha256(), outputLength: 32);
@@ -31,8 +31,12 @@ class SyncCrypto {
   }
 
   /// Encrypt [plaintext] with [key]. Returns base64(nonce + ciphertext + tag).
-  static Future<String> encrypt(String plaintext, SecretKey key) async {
-    final nonce = _randomBytes(12);
+  static Future<String> encrypt(
+    String plaintext,
+    SecretKey key, {
+    List<int>? nonceBytes,
+  }) async {
+    final nonce = nonceBytes ?? _randomBytes(12);
     final box = await _aesGcm.encrypt(
       utf8.encode(plaintext),
       secretKey: key,
@@ -41,7 +45,11 @@ class SyncCrypto {
     final combined = Uint8List(12 + box.cipherText.length + 16);
     combined.setRange(0, 12, nonce);
     combined.setRange(12, 12 + box.cipherText.length, box.cipherText);
-    combined.setRange(12 + box.cipherText.length, combined.length, box.mac.bytes);
+    combined.setRange(
+      12 + box.cipherText.length,
+      combined.length,
+      box.mac.bytes,
+    );
     return base64.encode(combined);
   }
 
@@ -60,15 +68,5 @@ class SyncCrypto {
   static Uint8List _randomBytes(int length) {
     final rng = Random.secure();
     return Uint8List.fromList(List.generate(length, (_) => rng.nextInt(256)));
-  }
-
-  /// Store/load key as base64 string for SharedPreferences.
-  static Future<String> keyToBase64(SecretKey key) async {
-    final bytes = await key.extractBytes();
-    return base64.encode(bytes);
-  }
-
-  static SecretKey keyFromBase64(String b64) {
-    return SecretKey(base64.decode(b64));
   }
 }

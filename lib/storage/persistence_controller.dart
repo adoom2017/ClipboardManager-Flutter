@@ -21,7 +21,10 @@ class PersistenceController {
       if (content.trim().isEmpty) return [];
       return ClipboardItem.listFromJson(content);
     } catch (error) {
-      AppLogger.instance.error('Persistence', 'failed to load clipboard items error=$error');
+      AppLogger.instance.error(
+        'Persistence',
+        'failed to load clipboard items error=$error',
+      );
       return [];
     }
   }
@@ -31,7 +34,10 @@ class PersistenceController {
       final path = await _filePath;
       await File(path).writeAsString(ClipboardItem.listToJson(items));
     } catch (error) {
-      AppLogger.instance.error('Persistence', 'failed to save clipboard items error=$error');
+      AppLogger.instance.error(
+        'Persistence',
+        'failed to save clipboard items error=$error',
+      );
     }
   }
 
@@ -41,7 +47,10 @@ class PersistenceController {
       final file = File(path);
       if (await file.exists()) await file.delete();
     } catch (error) {
-      AppLogger.instance.warn('Persistence', 'failed to delete clipboard history error=$error');
+      AppLogger.instance.warn(
+        'Persistence',
+        'failed to delete clipboard history error=$error',
+      );
     }
   }
 }

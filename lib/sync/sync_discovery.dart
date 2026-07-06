@@ -258,7 +258,14 @@ class SyncDiscovery {
           ? name.trim()
           : _friendlyDisplayName(host, fallback: id);
 
-      _peerCtrl.add(DiscoveredPeer(id: id, displayName: displayName, host: host, port: port));
+      _peerCtrl.add(
+        DiscoveredPeer(
+          id: id,
+          displayName: displayName,
+          host: host,
+          port: port,
+        ),
+      );
       _logDebug(
         'broadcast peer discovered id=$id displayName=$displayName host=$host sender=${datagram.address.address} port=$port',
       );

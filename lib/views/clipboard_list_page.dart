@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import '../view_models/clipboard_list_view_model.dart';
@@ -65,8 +66,15 @@ class _ClipboardListBody extends StatelessWidget {
                     style: const TextStyle(fontSize: 13, color: _kTextPrimary),
                     decoration: const InputDecoration(
                       hintText: '搜索',
-                      hintStyle: TextStyle(fontSize: 13, color: _kTextSecondary),
-                      prefixIcon: Icon(Icons.search, size: 15, color: _kTextSecondary),
+                      hintStyle: TextStyle(
+                        fontSize: 13,
+                        color: _kTextSecondary,
+                      ),
+                      prefixIcon: Icon(
+                        Icons.search,
+                        size: 15,
+                        color: _kTextSecondary,
+                      ),
                       border: InputBorder.none,
                       contentPadding: EdgeInsets.symmetric(vertical: 8),
                       isDense: true,
@@ -102,19 +110,23 @@ class _ClipboardListBody extends StatelessWidget {
                   child: Column(
                     mainAxisSize: MainAxisSize.min,
                     children: [
-                      Icon(Icons.content_paste_off,
-                          size: 40,
-                          color: _kTextSecondary.withValues(alpha: 0.35)),
+                      Icon(
+                        Icons.content_paste_off,
+                        size: 40,
+                        color: _kTextSecondary.withValues(alpha: 0.35),
+                      ),
                       const SizedBox(height: 10),
-                      const Text('暂无剪贴板记录',
-                          style: TextStyle(
-                              color: _kTextSecondary, fontSize: 13)),
+                      const Text(
+                        '暂无剪贴板记录',
+                        style: TextStyle(color: _kTextSecondary, fontSize: 13),
+                      ),
                     ],
                   ),
                 )
               : ListView.builder(
                   itemCount: items.length,
                   itemBuilder: (ctx, i) => _ClipboardItemTile(
+                    key: ValueKey(items[i].id),
                     item: items[i],
                     vm: vm,
                     isLast: i == items.length - 1,
@@ -145,8 +157,12 @@ class _ClipboardItemTile extends StatefulWidget {
   final ClipboardItem item;
   final ClipboardListViewModel vm;
   final bool isLast;
-  const _ClipboardItemTile(
-      {required this.item, required this.vm, required this.isLast});
+  const _ClipboardItemTile({
+    super.key,
+    required this.item,
+    required this.vm,
+    required this.isLast,
+  });
 
   @override
   State<_ClipboardItemTile> createState() => _ClipboardItemTileState();
@@ -154,6 +170,28 @@ class _ClipboardItemTile extends StatefulWidget {
 
 class _ClipboardItemTileState extends State<_ClipboardItemTile> {
   bool _hovered = false;
+  bool _pointerInTile = false;
+  bool _pointerInDetail = false;
+  Timer? _previewTimer;
+  Timer? _hideTimer;
+  OverlayEntry? _detailOverlay;
+
+  @override
+  void didUpdateWidget(covariant _ClipboardItemTile oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.item.id != widget.item.id) {
+      _removeDetailOverlay();
+    }
+  }
+
+  @override
+  void dispose() {
+    _previewTimer?.cancel();
+    _hideTimer?.cancel();
+    _detailOverlay?.remove();
+    _detailOverlay = null;
+    super.dispose();
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -162,8 +200,8 @@ class _ClipboardItemTileState extends State<_ClipboardItemTile> {
 
     return MouseRegion(
       cursor: isText ? SystemMouseCursors.click : MouseCursor.defer,
-      onEnter: (_) => setState(() => _hovered = true),
-      onExit: (_) => setState(() => _hovered = false),
+      onEnter: (_) => _handleTileHover(true),
+      onExit: (_) => _handleTileHover(false),
       child: GestureDetector(
         onTap: isText ? () => widget.vm.pasteItem(item) : null,
         behavior: HitTestBehavior.opaque,
@@ -190,31 +228,39 @@ class _ClipboardItemTileState extends State<_ClipboardItemTile> {
                                 maxLines: 2,
                                 overflow: TextOverflow.ellipsis,
                                 style: const TextStyle(
-                                    fontSize: 13,
-                                    color: _kTextPrimary,
-                                    height: 1.35),
+                                  fontSize: 13,
+                                  color: _kTextPrimary,
+                                  height: 1.35,
+                                ),
                               ),
                               const SizedBox(height: 3),
                               Row(
                                 children: [
                                   _typeIcon(item.contentType),
                                   const SizedBox(width: 4),
-                                  Text(item.relativeTime,
-                                      style: const TextStyle(
-                                          fontSize: 11,
-                                          color: _kTextSecondary)),
+                                  Text(
+                                    item.relativeTime,
+                                    style: const TextStyle(
+                                      fontSize: 11,
+                                      color: _kTextSecondary,
+                                    ),
+                                  ),
                                   if (item.sourceApp.isNotEmpty) ...[
-                                    const Text('  ·  ',
-                                        style: TextStyle(
-                                            fontSize: 11,
-                                            color: _kTextSecondary)),
+                                    const Text(
+                                      '  ·  ',
+                                      style: TextStyle(
+                                        fontSize: 11,
+                                        color: _kTextSecondary,
+                                      ),
+                                    ),
                                     Flexible(
                                       child: Text(
                                         item.sourceApp,
                                         overflow: TextOverflow.ellipsis,
                                         style: const TextStyle(
-                                            fontSize: 11,
-                                            color: _kTextSecondary),
+                                          fontSize: 11,
+                                          color: _kTextSecondary,
+                                        ),
                                       ),
                                     ),
                                   ],
@@ -256,15 +302,13 @@ class _ClipboardItemTileState extends State<_ClipboardItemTile> {
                                     ? _kAccent
                                     : _kTextSecondary,
                                 tooltip: item.isPinned ? '取消固定' : '固定',
-                                onTap: () =>
-                                    widget.vm.togglePin(item.id),
+                                onTap: () => widget.vm.togglePin(item.id),
                               ),
                               _ActionIcon(
                                 icon: Icons.close_rounded,
                                 color: _kTextSecondary,
                                 tooltip: '删除',
-                                onTap: () =>
-                                    widget.vm.removeItem(item.id),
+                                onTap: () => widget.vm.removeItem(item.id),
                               ),
                             ],
                           ),
@@ -278,10 +322,7 @@ class _ClipboardItemTileState extends State<_ClipboardItemTile> {
                       left: 0,
                       top: 0,
                       bottom: 0,
-                      child: Container(
-                        width: 3,
-                        color: _kAccent,
-                      ),
+                      child: Container(width: 3, color: _kAccent),
                     ),
                 ],
               ),
@@ -299,12 +340,71 @@ class _ClipboardItemTileState extends State<_ClipboardItemTile> {
     );
   }
 
+  void _handleTileHover(bool hovering) {
+    _pointerInTile = hovering;
+    _hideTimer?.cancel();
+    _previewTimer?.cancel();
+    if (mounted) setState(() => _hovered = hovering);
+
+    if (hovering) {
+      _previewTimer = Timer(
+        const Duration(milliseconds: 350),
+        _showDetailOverlay,
+      );
+    } else {
+      _scheduleDetailHide();
+    }
+  }
+
+  void _showDetailOverlay() {
+    if (!mounted || !_pointerInTile || _detailOverlay != null) return;
+    _detailOverlay = OverlayEntry(
+      builder: (overlayContext) => Positioned(
+        left: 16,
+        right: 16,
+        top: 92,
+        child: MouseRegion(
+          onEnter: (_) {
+            _pointerInDetail = true;
+            _hideTimer?.cancel();
+          },
+          onExit: (_) {
+            _pointerInDetail = false;
+            _scheduleDetailHide();
+          },
+          child: _ClipboardDetailCard(
+            item: widget.item,
+            onClose: _removeDetailOverlay,
+          ),
+        ),
+      ),
+    );
+    Overlay.of(context, rootOverlay: true).insert(_detailOverlay!);
+  }
+
+  void _scheduleDetailHide() {
+    _hideTimer?.cancel();
+    _hideTimer = Timer(const Duration(milliseconds: 150), () {
+      if (!_pointerInTile && !_pointerInDetail) {
+        _removeDetailOverlay();
+      }
+    });
+  }
+
+  void _removeDetailOverlay() {
+    _previewTimer?.cancel();
+    _hideTimer?.cancel();
+    _detailOverlay?.remove();
+    _detailOverlay = null;
+    _pointerInDetail = false;
+  }
+
   Widget _typeIcon(ClipboardContentType type) {
     final icon = type == ClipboardContentType.image
         ? Icons.image_outlined
         : type == ClipboardContentType.file
-            ? Icons.insert_drive_file_outlined
-            : Icons.notes_outlined;
+        ? Icons.insert_drive_file_outlined
+        : Icons.notes_outlined;
     return Icon(icon, size: 11, color: _kTextSecondary);
   }
 
@@ -360,13 +460,97 @@ class _ClipboardItemTileState extends State<_ClipboardItemTile> {
   }
 }
 
+class _ClipboardDetailCard extends StatelessWidget {
+  final ClipboardItem item;
+  final VoidCallback onClose;
+
+  const _ClipboardDetailCard({required this.item, required this.onClose});
+
+  @override
+  Widget build(BuildContext context) {
+    return Material(
+      color: Colors.white,
+      elevation: 12,
+      shadowColor: Colors.black.withValues(alpha: 0.24),
+      borderRadius: BorderRadius.circular(12),
+      clipBehavior: Clip.antiAlias,
+      child: ConstrainedBox(
+        constraints: const BoxConstraints(maxHeight: 330),
+        child: Padding(
+          padding: const EdgeInsets.fromLTRB(14, 10, 8, 12),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Row(
+                children: [
+                  const Expanded(
+                    child: Text(
+                      '完整内容',
+                      style: TextStyle(
+                        color: _kTextPrimary,
+                        fontSize: 13,
+                        fontWeight: FontWeight.w600,
+                      ),
+                    ),
+                  ),
+                  IconButton(
+                    tooltip: '关闭',
+                    visualDensity: VisualDensity.compact,
+                    iconSize: 16,
+                    onPressed: onClose,
+                    icon: const Icon(Icons.close, color: _kTextSecondary),
+                  ),
+                ],
+              ),
+              Text(
+                '${item.sourceApp}  ·  ${item.relativeTime}',
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: const TextStyle(fontSize: 11, color: _kTextSecondary),
+              ),
+              const SizedBox(height: 8),
+              const Divider(height: 1, color: _kSeparator),
+              const SizedBox(height: 10),
+              Flexible(
+                child: SingleChildScrollView(
+                  child: SelectableText(
+                    _detailText,
+                    style: const TextStyle(
+                      color: _kTextPrimary,
+                      fontSize: 13,
+                      height: 1.45,
+                    ),
+                  ),
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  String get _detailText {
+    if (item.contentType == ClipboardContentType.file &&
+        item.fileUrls?.isNotEmpty == true) {
+      return item.fileUrls!.join('\n');
+    }
+    return item.content;
+  }
+}
+
 // ─── Shared small widgets ─────────────────────────────────────────────────
 
 class _IconBtn extends StatefulWidget {
   final IconData icon;
   final String tooltip;
   final VoidCallback onTap;
-  const _IconBtn({required this.icon, required this.tooltip, required this.onTap});
+  const _IconBtn({
+    required this.icon,
+    required this.tooltip,
+    required this.onTap,
+  });
 
   @override
   State<_IconBtn> createState() => _IconBtnState();
@@ -393,9 +577,11 @@ class _IconBtnState extends State<_IconBtn> {
               color: _hovered ? _kHoverStrong : Colors.transparent,
               borderRadius: BorderRadius.circular(6),
             ),
-            child: Icon(widget.icon,
-                size: 16,
-                color: _hovered ? _kTextPrimary : _kTextSecondary),
+            child: Icon(
+              widget.icon,
+              size: 16,
+              color: _hovered ? _kTextPrimary : _kTextSecondary,
+            ),
           ),
         ),
       ),
@@ -408,11 +594,12 @@ class _ActionIcon extends StatefulWidget {
   final Color color;
   final String tooltip;
   final VoidCallback onTap;
-  const _ActionIcon(
-      {required this.icon,
-      required this.color,
-      required this.tooltip,
-      required this.onTap});
+  const _ActionIcon({
+    required this.icon,
+    required this.color,
+    required this.tooltip,
+    required this.onTap,
+  });
 
   @override
   State<_ActionIcon> createState() => _ActionIconState();
@@ -439,9 +626,11 @@ class _ActionIconState extends State<_ActionIcon> {
               color: _hovered ? _kHoverStrong : Colors.transparent,
               borderRadius: BorderRadius.circular(5),
             ),
-            child: Icon(widget.icon,
-                size: 14,
-                color: _hovered ? _kTextPrimary : widget.color),
+            child: Icon(
+              widget.icon,
+              size: 14,
+              color: _hovered ? _kTextPrimary : widget.color,
+            ),
           ),
         ),
       ),
@@ -475,16 +664,20 @@ class _MacAlertDialog extends StatelessWidget {
         child: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
-            Text(title,
-                style: const TextStyle(
-                    fontWeight: FontWeight.w600,
-                    fontSize: 14,
-                    color: _kTextPrimary)),
+            Text(
+              title,
+              style: const TextStyle(
+                fontWeight: FontWeight.w600,
+                fontSize: 14,
+                color: _kTextPrimary,
+              ),
+            ),
             const SizedBox(height: 8),
-            Text(message,
-                textAlign: TextAlign.center,
-                style: const TextStyle(
-                    fontSize: 12, color: _kTextSecondary)),
+            Text(
+              message,
+              textAlign: TextAlign.center,
+              style: const TextStyle(fontSize: 12, color: _kTextSecondary),
+            ),
             const SizedBox(height: 16),
             Row(
               mainAxisAlignment: MainAxisAlignment.center,
@@ -493,10 +686,12 @@ class _MacAlertDialog extends StatelessWidget {
                   _macBtn('取消', onTap: () => Navigator.pop(context, false)),
                   const SizedBox(width: 8),
                 ],
-                _macBtn(confirmLabel,
-                    onTap: () => Navigator.pop(context, true),
-                    isPrimary: true,
-                    isDestructive: isDestructive),
+                _macBtn(
+                  confirmLabel,
+                  onTap: () => Navigator.pop(context, true),
+                  isPrimary: true,
+                  isDestructive: isDestructive,
+                ),
               ],
             ),
           ],
@@ -505,27 +700,34 @@ class _MacAlertDialog extends StatelessWidget {
     );
   }
 
-  Widget _macBtn(String label,
-      {required VoidCallback onTap,
-      bool isPrimary = false,
-      bool isDestructive = false}) {
+  Widget _macBtn(
+    String label, {
+    required VoidCallback onTap,
+    bool isPrimary = false,
+    bool isDestructive = false,
+  }) {
     final bg = isPrimary && isDestructive
         ? const Color(0xFFFF3B30)
         : isPrimary
-            ? _kAccent
-            : const Color(0xFFE5E5EA);
+        ? _kAccent
+        : const Color(0xFFE5E5EA);
     final fg = isPrimary ? Colors.white : _kTextPrimary;
     return GestureDetector(
       onTap: onTap,
       child: Container(
         padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 7),
         decoration: BoxDecoration(
-            color: bg, borderRadius: BorderRadius.circular(6)),
-        child: Text(label,
-            style: TextStyle(
-                fontSize: 13,
-                fontWeight: FontWeight.w500,
-                color: fg)),
+          color: bg,
+          borderRadius: BorderRadius.circular(6),
+        ),
+        child: Text(
+          label,
+          style: TextStyle(
+            fontSize: 13,
+            fontWeight: FontWeight.w500,
+            color: fg,
+          ),
+        ),
       ),
     );
   }
@@ -564,7 +766,10 @@ class _PeerPickerDialog extends StatelessWidget {
                   borderRadius: BorderRadius.circular(8),
                   onTap: () => onSelected(peers[i]),
                   child: Padding(
-                    padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 10),
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 8,
+                      vertical: 10,
+                    ),
                     child: Row(
                       children: [
                         const Icon(Icons.devices, size: 18, color: _kAccent),
@@ -575,11 +780,17 @@ class _PeerPickerDialog extends StatelessWidget {
                             children: [
                               Text(
                                 peers[i].displayName,
-                                style: const TextStyle(fontSize: 13, color: _kTextPrimary),
+                                style: const TextStyle(
+                                  fontSize: 13,
+                                  color: _kTextPrimary,
+                                ),
                               ),
                               Text(
                                 '${peers[i].host}:${peers[i].port}',
-                                style: const TextStyle(fontSize: 11, color: _kTextSecondary),
+                                style: const TextStyle(
+                                  fontSize: 11,
+                                  color: _kTextSecondary,
+                                ),
                               ),
                             ],
                           ),
@@ -597,7 +808,10 @@ class _PeerPickerDialog extends StatelessWidget {
                 child: GestureDetector(
                   onTap: () => Navigator.pop(context),
                   child: Container(
-                    padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 7),
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 16,
+                      vertical: 7,
+                    ),
                     decoration: BoxDecoration(
                       color: const Color(0xFFE5E5EA),
                       borderRadius: BorderRadius.circular(6),

@@ -89,9 +89,7 @@ class WindowActivationService {
       0,
       0,
       0,
-      win32.SWP_NOMOVE |
-          win32.SWP_NOSIZE |
-          win32.SWP_SHOWWINDOW,
+      win32.SWP_NOMOVE | win32.SWP_NOSIZE | win32.SWP_SHOWWINDOW,
     );
     win32.ShowWindow(hwnd, win32.SW_SHOWNORMAL);
   }

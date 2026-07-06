@@ -3,13 +3,25 @@ import '../storage/settings_store.dart';
 
 class PrivacyGuard {
   static const _blockedKeywords = [
-    'password', 'secret', 'token', 'api_key', 'private_key',
-    '密码', '口令', '密钥',
+    'password',
+    'secret',
+    'token',
+    'api_key',
+    'private_key',
+    '密码',
+    '口令',
+    '密钥',
   ];
 
   static const _blockedApps = [
-    '1password', 'bitwarden', 'keepass', 'lastpass', 'dashlane',
-    'keychain', 'enpass', 'roboform',
+    '1password',
+    'bitwarden',
+    'keepass',
+    'lastpass',
+    'dashlane',
+    'keychain',
+    'enpass',
+    'roboform',
   ];
 
   static bool isAllowed(ClipboardItem item) {

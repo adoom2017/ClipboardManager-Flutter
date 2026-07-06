@@ -55,21 +55,24 @@ void main() async {
     modifiers: [HotKeyModifier.alt],
     scope: HotKeyScope.system,
   );
-  await hotKeyManager.register(hotKey, keyDownHandler: (_) async {
-    if (await windowManager.isVisible()) {
-      await windowManager.hide();
-    } else {
-      // Save the currently focused window before showing the picker so a
-      // selection can paste back into the original target.
-      AutoPasteService.captureCurrentTarget();
-      shellPageIndex.value = 0;
-      await WindowActivationService.showInactive();
-    }
-  });
+  await hotKeyManager.register(
+    hotKey,
+    keyDownHandler: (_) async {
+      if (await windowManager.isVisible()) {
+        await windowManager.hide();
+      } else {
+        // Save the currently focused window before showing the picker so a
+        // selection can paste back into the original target.
+        AutoPasteService.captureCurrentTarget();
+        shellPageIndex.value = 0;
+        await WindowActivationService.showInactive();
+      }
+    },
+  );
 
   // Start clipboard monitor and sync
   ClipboardMonitor.instance.start();
-  SyncService.instance.start();
+  await SyncService.instance.start();
 
   runApp(const ClipboardManagerApp());
 }
@@ -89,8 +92,9 @@ class ClipboardManagerApp extends StatelessWidget {
         title: 'Clipboard Manager',
         debugShowCheckedModeBanner: false,
         theme: ThemeData(
-          fontFamily:
-              defaultTargetPlatform == TargetPlatform.windows ? 'Segoe UI' : null,
+          fontFamily: defaultTargetPlatform == TargetPlatform.windows
+              ? 'Segoe UI'
+              : null,
           colorScheme: ColorScheme.fromSeed(
             seedColor: const Color(0xFF007AFF),
           ).copyWith(primary: const Color(0xFF007AFF)),
@@ -114,11 +118,7 @@ class _MainShellState extends State<MainShell>
     with WindowListener, TrayListener {
   int _selectedIndex = 0;
 
-  static const _pages = [
-    ClipboardListPage(),
-    SyncPage(),
-    SettingsPage(),
-  ];
+  static const _pages = [ClipboardListPage(), SyncPage(), SettingsPage()];
 
   @override
   void initState() {
@@ -146,13 +146,17 @@ class _MainShellState extends State<MainShell>
     if (Platform.isWindows) {
       await trayManager.setIcon('assets/icon.ico');
       await trayManager.setToolTip('Clipboard Manager');
-      await trayManager.setContextMenu(Menu(items: [
-        MenuItem(key: 'show', label: '显示主窗口'),
-        MenuItem.separator(),
-        MenuItem(key: 'settings', label: '设置'),
-        MenuItem.separator(),
-        MenuItem(key: 'quit', label: '退出'),
-      ]));
+      await trayManager.setContextMenu(
+        Menu(
+          items: [
+            MenuItem(key: 'show', label: '显示主窗口'),
+            MenuItem.separator(),
+            MenuItem(key: 'settings', label: '设置'),
+            MenuItem.separator(),
+            MenuItem(key: 'quit', label: '退出'),
+          ],
+        ),
+      );
     }
   }
 
@@ -254,7 +258,10 @@ class _MacTitleBar extends StatelessWidget {
         child: Row(
           children: [
             const SizedBox(width: 14),
-            _TrafficLight(color: const Color(0xFFFF5F57), onTap: () => windowManager.hide()),
+            _TrafficLight(
+              color: const Color(0xFFFF5F57),
+              onTap: () => windowManager.hide(),
+            ),
             const SizedBox(width: 8),
             const _TrafficLight(color: Color(0xFFFFBD2E)),
             const SizedBox(width: 8),
@@ -295,7 +302,9 @@ class _TrafficLightState extends State<_TrafficLight> {
   @override
   Widget build(BuildContext context) {
     return MouseRegion(
-      cursor: widget.onTap != null ? SystemMouseCursors.click : MouseCursor.defer,
+      cursor: widget.onTap != null
+          ? SystemMouseCursors.click
+          : MouseCursor.defer,
       onEnter: (_) => setState(() => _hovered = true),
       onExit: (_) => setState(() => _hovered = false),
       child: GestureDetector(
@@ -305,7 +314,9 @@ class _TrafficLightState extends State<_TrafficLight> {
           width: 12,
           height: 12,
           decoration: BoxDecoration(
-            color: _hovered ? widget.color : widget.color.withValues(alpha: 0.8),
+            color: _hovered
+                ? widget.color
+                : widget.color.withValues(alpha: 0.8),
             shape: BoxShape.circle,
           ),
         ),
@@ -377,7 +388,9 @@ class _TabItemState extends State<_TabItem> {
   Widget build(BuildContext context) {
     const accent = Color(0xFF007AFF);
     const inactive = Color(0xFF8E8E93);
-    final color = widget.selected ? accent : (_hovered ? const Color(0xFF48484A) : inactive);
+    final color = widget.selected
+        ? accent
+        : (_hovered ? const Color(0xFF48484A) : inactive);
     return MouseRegion(
       cursor: SystemMouseCursors.click,
       onEnter: (_) => setState(() => _hovered = true),
@@ -399,7 +412,9 @@ class _TabItemState extends State<_TabItem> {
               style: TextStyle(
                 fontSize: 10,
                 color: color,
-                fontWeight: widget.selected ? FontWeight.w600 : FontWeight.normal,
+                fontWeight: widget.selected
+                    ? FontWeight.w600
+                    : FontWeight.normal,
               ),
             ),
           ],

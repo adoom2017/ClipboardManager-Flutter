@@ -20,7 +20,9 @@ class SyncConnection {
   bool get isConnected => !_closed;
 
   SyncConnection(this._socket, this.peerId, {this.onClosed}) {
-    _logDebug('open local=${_socket.address.address}:${_socket.port} remote=${_socket.remoteAddress.address}:${_socket.remotePort} peerId=$peerId');
+    _logDebug(
+      'open local=${_socket.address.address}:${_socket.port} remote=${_socket.remoteAddress.address}:${_socket.remotePort} peerId=$peerId',
+    );
     _socket.listen(
       _onData,
       onDone: _onClose,
@@ -37,14 +39,17 @@ class SyncConnection {
     _buf.addAll(data);
     while (true) {
       if (_buf.length < 4) break;
-      final len = ByteData.sublistView(Uint8List.fromList(_buf.sublist(0, 4)))
-          .getUint32(0, Endian.big);
+      final len = ByteData.sublistView(
+        Uint8List.fromList(_buf.sublist(0, 4)),
+      ).getUint32(0, Endian.big);
       if (_buf.length < 4 + len) break;
       final msgBytes = _buf.sublist(4, 4 + len);
       _buf.removeRange(0, 4 + len);
       try {
         final msg = SyncMessage.decode(utf8.decode(msgBytes));
-        _logDebug('recv type=${msg.type.name} peerId=$peerId senderId=${msg.senderId}');
+        _logDebug(
+          'recv type=${msg.type.name} peerId=$peerId senderId=${msg.senderId}',
+        );
         _msgCtrl.add(msg);
       } catch (_) {}
     }
@@ -53,7 +58,9 @@ class SyncConnection {
   void _onClose() {
     if (_closed) return;
     _closed = true;
-    _logDebug('close peerId=$peerId remote=${_socket.remoteAddress.address}:${_socket.remotePort}');
+    _logDebug(
+      'close peerId=$peerId remote=${_socket.remoteAddress.address}:${_socket.remotePort}',
+    );
     onClosed?.call();
     _msgCtrl.close();
   }
@@ -74,6 +81,8 @@ class SyncConnection {
     await _socket.close();
   }
 
-  void _logDebug(String message) => AppLogger.instance.debug('SyncConnection', message);
-  void _logWarn(String message) => AppLogger.instance.warn('SyncConnection', message);
+  void _logDebug(String message) =>
+      AppLogger.instance.debug('SyncConnection', message);
+  void _logWarn(String message) =>
+      AppLogger.instance.warn('SyncConnection', message);
 }

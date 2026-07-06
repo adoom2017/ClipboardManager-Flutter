@@ -26,9 +26,11 @@ class ClipboardListViewModel extends ChangeNotifier {
     if (_searchQuery.isEmpty) return _store.items;
     final q = _searchQuery.toLowerCase();
     return _store.items
-        .where((i) =>
-            i.content.toLowerCase().contains(q) ||
-            i.sourceApp.toLowerCase().contains(q))
+        .where(
+          (i) =>
+              i.content.toLowerCase().contains(q) ||
+              i.sourceApp.toLowerCase().contains(q),
+        )
         .toList();
   }
 

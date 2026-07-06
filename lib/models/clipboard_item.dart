@@ -40,15 +40,15 @@ class ClipboardItem {
   }
 
   Map<String, dynamic> toJson() => {
-        'id': id,
-        'contentType': contentType.name,
-        'content': content,
-        'timestamp': timestamp.toUtc().toIso8601String(),
-        'sourceApp': sourceApp,
-        'isPinned': isPinned,
-        'imageName': imageName,
-        'fileUrls': fileUrls,
-      };
+    'id': id,
+    'contentType': contentType.name,
+    'content': content,
+    'timestamp': timestamp.toUtc().toIso8601String(),
+    'sourceApp': sourceApp,
+    'isPinned': isPinned,
+    'imageName': imageName,
+    'fileUrls': fileUrls,
+  };
 
   factory ClipboardItem.fromJson(Map<String, dynamic> json) {
     return ClipboardItem(
@@ -68,7 +68,9 @@ class ClipboardItem {
 
   static List<ClipboardItem> listFromJson(String src) {
     final list = jsonDecode(src) as List<dynamic>;
-    return list.map((e) => ClipboardItem.fromJson(e as Map<String, dynamic>)).toList();
+    return list
+        .map((e) => ClipboardItem.fromJson(e as Map<String, dynamic>))
+        .toList();
   }
 
   static String listToJson(List<ClipboardItem> items) {

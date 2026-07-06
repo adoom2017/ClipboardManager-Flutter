@@ -2,6 +2,7 @@ import 'dart:io';
 import 'package:flutter/foundation.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:uuid/uuid.dart';
+import 'secure_credential_store.dart';
 
 class SettingsStore extends ChangeNotifier {
   static final SettingsStore _instance = SettingsStore._internal();
@@ -9,16 +10,18 @@ class SettingsStore extends ChangeNotifier {
   SettingsStore._internal();
 
   late SharedPreferences _prefs;
+  late SecureCredentialStore _secureStore;
 
   // Defaults
   int _maxHistoryCount = 100;
   int _retainDays = 7;
-  bool _privacyGuardEnabled = false;
+  bool _privacyGuardEnabled = true;
   bool _launchAtStartup = false;
   String _translationApiUrl = 'https://api.openai.com/v1';
   String _translationApiKey = '';
   String _translationModel = 'gpt-4o-mini';
   String _syncLocalDeviceId = '';
+  String _syncPin = '';
 
   int get maxHistoryCount => _maxHistoryCount;
   int get retainDays => _retainDays;
@@ -28,17 +31,27 @@ class SettingsStore extends ChangeNotifier {
   String get translationApiKey => _translationApiKey;
   String get translationModel => _translationModel;
   String get syncLocalDeviceId => _syncLocalDeviceId;
+  String get syncPin => _syncPin;
 
   Future<void> init() async {
     _prefs = await SharedPreferences.getInstance();
+    _secureStore = SecureCredentialStore(_prefs);
     _maxHistoryCount = _prefs.getInt('maxHistoryCount') ?? 100;
     _retainDays = _prefs.getInt('retainDays') ?? 7;
-    _privacyGuardEnabled = _prefs.getBool('privacyGuard') ?? false;
+    _privacyGuardEnabled = _prefs.getBool('privacyGuard') ?? true;
     _launchAtStartup = _prefs.getBool('launchAtStartup') ?? false;
-    _translationApiUrl = _prefs.getString('translationApiUrl') ?? 'https://api.openai.com/v1';
-    _translationApiKey = _prefs.getString('translationApiKey') ?? '';
+    _translationApiUrl =
+        _prefs.getString('translationApiUrl') ?? 'https://api.openai.com/v1';
+    final legacyApiKey = _prefs.getString('translationApiKey') ?? '';
+    _translationApiKey = _secureStore.read('translationApiKey') ?? legacyApiKey;
+    if (legacyApiKey.isNotEmpty) {
+      await _secureStore.write('translationApiKey', legacyApiKey);
+      await _prefs.remove('translationApiKey');
+    }
     _translationModel = _prefs.getString('translationModel') ?? 'gpt-4o-mini';
-    _syncLocalDeviceId = _prefs.getString('syncLocalDeviceID') ?? _generateDeviceId();
+    _syncLocalDeviceId =
+        _prefs.getString('syncLocalDeviceID') ?? _generateDeviceId();
+    _syncPin = _secureStore.read('syncPin') ?? '';
   }
 
   String _generateDeviceId() {
@@ -80,7 +93,14 @@ class SettingsStore extends ChangeNotifier {
 
   Future<void> setTranslationApiKey(String v) async {
     _translationApiKey = v;
-    await _prefs.setString('translationApiKey', v);
+    await _secureStore.write('translationApiKey', v);
+    notifyListeners();
+  }
+
+  Future<void> setSyncPin(String value) async {
+    final digits = value.replaceAll(RegExp(r'\D'), '');
+    _syncPin = digits.substring(0, digits.length.clamp(0, 6));
+    await _secureStore.write('syncPin', _syncPin);
     notifyListeners();
   }
 
@@ -98,12 +118,18 @@ class SettingsStore extends ChangeNotifier {
     final exePath = Platform.resolvedExecutable;
     if (enable) {
       await Process.run('reg', [
-        'add', regPath, '/v', keyName, '/t', 'REG_SZ', '/d', '"$exePath"', '/f'
+        'add',
+        regPath,
+        '/v',
+        keyName,
+        '/t',
+        'REG_SZ',
+        '/d',
+        '"$exePath"',
+        '/f',
       ]);
     } else {
-      await Process.run('reg', [
-        'delete', regPath, '/v', keyName, '/f'
-      ]);
+      await Process.run('reg', ['delete', regPath, '/v', keyName, '/f']);
     }
   }
 }
