@@ -6,7 +6,6 @@ const _kAccent = Color(0xFF007AFF);
 const _kTextPrimary = Color(0xFF1C1C1E);
 const _kTextSecondary = Color(0xFF8E8E93);
 const _kSeparator = Color(0xFFE5E5EA);
-const _kSurface = Color(0xFFFFFFFF);
 
 class SyncPage extends StatefulWidget {
   const SyncPage({super.key});
@@ -150,19 +149,8 @@ class _SyncPageState extends State<SyncPage> {
             ),
           ),
         ),
-        Container(
-          margin: const EdgeInsets.symmetric(horizontal: 12),
-          decoration: BoxDecoration(
-            color: _kSurface,
-            borderRadius: BorderRadius.circular(10),
-            boxShadow: [
-              BoxShadow(
-                color: Colors.black.withValues(alpha: 0.04),
-                blurRadius: 2,
-                offset: const Offset(0, 1),
-              ),
-            ],
-          ),
+        Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 12),
           child: Column(children: rows),
         ),
       ],

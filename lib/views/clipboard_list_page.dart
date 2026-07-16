@@ -470,9 +470,15 @@ class _ClipboardDetailCard extends StatelessWidget {
   Widget build(BuildContext context) {
     return Material(
       color: Colors.white,
-      elevation: 12,
-      shadowColor: Colors.black.withValues(alpha: 0.24),
-      borderRadius: BorderRadius.circular(12),
+      elevation: 8,
+      shadowColor: Colors.black.withValues(alpha: 0.20),
+      shape: RoundedRectangleBorder(
+        borderRadius: BorderRadius.circular(18),
+        side: BorderSide(
+          color: Colors.black.withValues(alpha: 0.10),
+          width: 0.5,
+        ),
+      ),
       clipBehavior: Clip.antiAlias,
       child: ConstrainedBox(
         constraints: const BoxConstraints(maxHeight: 330),

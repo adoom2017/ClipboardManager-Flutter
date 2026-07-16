@@ -221,19 +221,33 @@ class _MainShellState extends State<MainShell>
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      backgroundColor: const Color(0xFFF2F2F7),
-      body: Column(
-        children: [
-          const _MacTitleBar(),
-          Expanded(child: _pages[_selectedIndex]),
-          _MacTabBar(
-            selectedIndex: _selectedIndex,
-            onTap: (i) {
-              shellPageIndex.value = i;
-              setState(() => _selectedIndex = i);
-            },
+      backgroundColor: const Color(0xFFE5E5EA),
+      body: Padding(
+        padding: const EdgeInsets.all(8),
+        child: Container(
+          clipBehavior: Clip.antiAlias,
+          decoration: BoxDecoration(
+            color: const Color(0xFFF2F2F7),
+            borderRadius: BorderRadius.circular(18),
+            border: Border.all(
+              color: Colors.black.withValues(alpha: 0.10),
+              width: 0.5,
+            ),
           ),
-        ],
+          child: Column(
+            children: [
+              const _MacTitleBar(),
+              Expanded(child: _pages[_selectedIndex]),
+              _MacTabBar(
+                selectedIndex: _selectedIndex,
+                onTap: (i) {
+                  shellPageIndex.value = i;
+                  setState(() => _selectedIndex = i);
+                },
+              ),
+            ],
+          ),
+        ),
       ),
     );
   }
