@@ -18,6 +18,7 @@ import 'views/settings_page.dart';
 import 'views/sync_page.dart';
 
 final ValueNotifier<int> shellPageIndex = ValueNotifier<int>(0);
+final ValueNotifier<int> clipboardPageFocusRequest = ValueNotifier<int>(0);
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
@@ -65,7 +66,9 @@ void main() async {
         // selection can paste back into the original target.
         AutoPasteService.captureCurrentTarget();
         shellPageIndex.value = 0;
-        await WindowActivationService.showInactive();
+        await WindowActivationService.showInteractive();
+        await windowManager.focus();
+        clipboardPageFocusRequest.value++;
       }
     },
   );
@@ -117,12 +120,16 @@ class MainShell extends StatefulWidget {
 class _MainShellState extends State<MainShell>
     with WindowListener, TrayListener {
   int _selectedIndex = 0;
-
-  static const _pages = [ClipboardListPage(), SyncPage(), SettingsPage()];
+  late final List<Widget> _pages;
 
   @override
   void initState() {
     super.initState();
+    _pages = [
+      ClipboardListPage(focusRequest: clipboardPageFocusRequest),
+      const SyncPage(),
+      const SettingsPage(),
+    ];
     windowManager.addListener(this);
     trayManager.addListener(this);
     shellPageIndex.addListener(_handleExternalPageChange);
@@ -180,6 +187,7 @@ class _MainShellState extends State<MainShell>
       case 'show':
         await WindowActivationService.showInteractive();
         await windowManager.focus();
+        if (_selectedIndex == 0) clipboardPageFocusRequest.value++;
         break;
       case 'settings':
         shellPageIndex.value = 2;
@@ -243,6 +251,11 @@ class _MainShellState extends State<MainShell>
                 onTap: (i) {
                   shellPageIndex.value = i;
                   setState(() => _selectedIndex = i);
+                  if (i == 0) {
+                    WidgetsBinding.instance.addPostFrameCallback((_) {
+                      clipboardPageFocusRequest.value++;
+                    });
+                  }
                 },
               ),
             ],
