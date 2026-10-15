@@ -105,6 +105,22 @@ class SyncService extends ChangeNotifier {
     );
     late final StreamSubscription<SyncMessage> subscription;
     subscription = conn.messages.listen((msg) async {
+      if (msg.type == SyncMessageType.error) {
+        _logWarn(
+          'sync rejected errorCode=${msg.errorCode} peerId=${peer.id} displayName=${peer.displayName}',
+        );
+        if (!ackCompleter.isCompleted) {
+          ackCompleter.completeError(
+            StateError(
+              SyncErrorCode.parse(
+                    msg.errorCode,
+                  )?.userMessage(peer.displayName) ??
+                  '${peer.displayName} 拒绝了同步内容。',
+            ),
+          );
+        }
+        return;
+      }
       if (msg.type == SyncMessageType.ack) {
         _logInfo(
           'sync acknowledged peerId=${peer.id} displayName=${peer.displayName}',
@@ -152,41 +168,7 @@ class SyncService extends ChangeNotifier {
       case SyncMessageType.hello:
         break;
       case SyncMessageType.items:
-        final settings = SettingsStore();
-        if (msg.encryptedPayload == null || settings.syncPin.length != 6) {
-          _logWarn('reject unencrypted items payload from ${msg.senderId}');
-          await conn.close();
-          break;
-        }
-        try {
-          final key = await SyncCrypto.deriveKey(
-            deviceId1: settings.syncLocalDeviceId,
-            deviceId2: msg.senderId,
-            pin: settings.syncPin,
-          );
-          final payloadText = await SyncCrypto.decrypt(
-            msg.encryptedPayload!,
-            key,
-          );
-          final payload = jsonDecode(payloadText) as Map<String, dynamic>;
-          final list = (payload['items'] as List<dynamic>? ?? const []);
-          _logInfo(
-            'received ${list.length} synced item(s) from ${msg.senderId}',
-          );
-          for (final raw in list) {
-            final item = _syncItemFromJson(raw as Map<String, dynamic>);
-            await ClipboardStore().addItem(item);
-          }
-          await conn.send(
-            SyncMessage(
-              type: SyncMessageType.ack,
-              senderId: SettingsStore().syncLocalDeviceId,
-              senderName: _deviceName(),
-            ),
-          );
-        } catch (error) {
-          _logError('failed to apply items from ${msg.senderId}: $error');
-        }
+        await _receiveItems(msg, conn);
         await conn.close();
         break;
       case SyncMessageType.ping:
@@ -200,8 +182,122 @@ class SyncService extends ChangeNotifier {
         break;
       case SyncMessageType.ack:
       case SyncMessageType.pong:
+      case SyncMessageType.error:
         break;
     }
+  }
+
+  Future<void> _receiveItems(SyncMessage msg, SyncConnection conn) async {
+    final settings = SettingsStore();
+    final encryptedPayload = msg.encryptedPayload;
+    if (encryptedPayload == null) {
+      _logWarn('reject unencrypted items payload from ${msg.senderId}');
+      return _reject(conn, SyncErrorCode.invalidPayload);
+    }
+    if (settings.syncPin.length != 6) {
+      _logWarn(
+        'reject items because sync PIN is not configured ${msg.senderId}',
+      );
+      return _reject(conn, SyncErrorCode.pinNotConfigured);
+    }
+
+    final String payloadText;
+    try {
+      final key = await SyncCrypto.deriveKey(
+        deviceId1: settings.syncLocalDeviceId,
+        deviceId2: msg.senderId,
+        pin: settings.syncPin,
+      );
+      payloadText = await SyncCrypto.decrypt(encryptedPayload, key);
+    } catch (_) {
+      _logWarn('failed to decrypt items payload from ${msg.senderId}');
+      return _reject(conn, SyncErrorCode.decryptFailed);
+    }
+
+    final store = ClipboardStore();
+    List<ClipboardItem>? received;
+    try {
+      final payload = jsonDecode(payloadText) as Map<String, dynamic>;
+      received = receivedItems(
+        payload['items'] as List<dynamic>? ?? const [],
+        exists: store.containsId,
+        now: DateTime.now().toUtc(),
+      );
+    } catch (_) {
+      received = null;
+    }
+    if (received == null) {
+      _logWarn('invalid items payload from ${msg.senderId}');
+      return _reject(conn, SyncErrorCode.invalidPayload);
+    }
+
+    _logInfo('storing ${received.length} synced item(s) from ${msg.senderId}');
+    for (final item in received) {
+      await store.addItem(item);
+    }
+    // ACK only after the items are persisted (or already existed).
+    await conn.send(
+      SyncMessage(
+        type: SyncMessageType.ack,
+        senderId: settings.syncLocalDeviceId,
+        senderName: _deviceName(),
+      ),
+    );
+  }
+
+  Future<void> _reject(SyncConnection conn, SyncErrorCode code) {
+    return conn.send(
+      SyncMessage(
+        type: SyncMessageType.error,
+        senderId: SettingsStore().syncLocalDeviceId,
+        senderName: _deviceName(),
+        errorCode: code.name,
+      ),
+    );
+  }
+
+  static const syncedSourcePrefix = '📡 ';
+  static final _uuidPattern = RegExp(
+    r'^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$',
+  );
+
+  /// Converts peer items into local items: de-duplicates by UUID
+  /// (case-insensitive), ignores the sender's pin state and stamps items with
+  /// the receive time. Returns null when any entry is malformed so the whole
+  /// batch is rejected.
+  @visibleForTesting
+  static List<ClipboardItem>? receivedItems(
+    List<dynamic> rawItems, {
+    required bool Function(String id) exists,
+    required DateTime now,
+  }) {
+    final seen = <String>{};
+    final result = <ClipboardItem>[];
+    for (var index = 0; index < rawItems.length; index++) {
+      final raw = rawItems[index];
+      if (raw is! Map<String, dynamic>) return null;
+      final id = raw['id'];
+      final content = raw['content'];
+      if (id is! String || !_uuidPattern.hasMatch(id) || content is! String) {
+        return null;
+      }
+      final normalizedId = id.toLowerCase();
+      if (exists(normalizedId) || !seen.add(normalizedId)) continue;
+      final sourceApp = raw['sourceApp'] as String? ?? 'Unknown';
+      result.add(
+        ClipboardItem(
+          id: normalizedId,
+          contentType: ClipboardContentType.text,
+          content: content,
+          // 1ms apart so batch order survives the store's timestamp sort.
+          timestamp: now.subtract(Duration(milliseconds: index)),
+          sourceApp: sourceApp.startsWith(syncedSourcePrefix)
+              ? sourceApp
+              : '$syncedSourcePrefix$sourceApp',
+        ),
+      );
+    }
+    return result;
   }
 
   Future<void> _sendItems(
@@ -304,30 +400,6 @@ class SyncService extends ChangeNotifier {
     'isPinned': item.isPinned,
   };
 
-  ClipboardItem _syncItemFromJson(Map<String, dynamic> json) {
-    final timestamp = json['timestamp'];
-    return ClipboardItem(
-      id: json['id'] as String,
-      contentType: ClipboardContentType.text,
-      content: json['content'] as String? ?? '',
-      timestamp: _decodeSyncTimestamp(timestamp),
-      sourceApp: json['sourceApp'] as String? ?? 'Unknown',
-      isPinned: json['isPinned'] as bool? ?? false,
-    );
-  }
-
-  DateTime _decodeSyncTimestamp(dynamic value) {
-    if (value is num) {
-      return _appleReferenceDate.add(
-        Duration(milliseconds: (value * 1000).round()),
-      );
-    }
-    if (value is String) {
-      return DateTime.tryParse(value)?.toUtc() ?? DateTime.now().toUtc();
-    }
-    return DateTime.now().toUtc();
-  }
-
   String _chooseDisplayName(
     String current,
     String incoming,
@@ -361,8 +433,6 @@ class SyncService extends ChangeNotifier {
       AppLogger.instance.info('SyncService', message);
   void _logWarn(String message) =>
       AppLogger.instance.warn('SyncService', message);
-  void _logError(String message) =>
-      AppLogger.instance.error('SyncService', message);
 }
 
 final DateTime _appleReferenceDate = DateTime.utc(2001, 1, 1);

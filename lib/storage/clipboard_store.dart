@@ -26,6 +26,13 @@ class ClipboardStore extends ChangeNotifier {
     notifyListeners();
   }
 
+  /// Item IDs are UUIDs; macOS sends them upper-case, Windows generates
+  /// lower-case, so compare case-insensitively.
+  bool containsId(String id) {
+    final normalized = id.toLowerCase();
+    return _items.any((e) => e.id.toLowerCase() == normalized);
+  }
+
   Future<void> addItem(ClipboardItem item) async {
     // Skip if content matches any pinned item
     if (_items.any((e) => e.isPinned && e.content == item.content)) return;
