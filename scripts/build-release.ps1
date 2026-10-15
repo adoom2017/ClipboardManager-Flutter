@@ -77,6 +77,9 @@ if ($env:OS -ne 'Windows_NT') {
 if ([string]::IsNullOrWhiteSpace($OutputDirectory)) {
     $OutputDirectory = Join-Path $RepositoryRoot 'build\release'
 }
+# Absolute path: .NET file APIs resolve relative paths against the process
+# directory, not the PowerShell location.
+$OutputDirectory = $ExecutionContext.SessionState.Path.GetUnresolvedProviderPathFromPSPath($OutputDirectory)
 
 Push-Location $RepositoryRoot
 try {
