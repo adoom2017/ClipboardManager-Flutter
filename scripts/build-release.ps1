@@ -27,6 +27,18 @@ function Invoke-SignFile {
     }
 }
 
+function Write-ChecksumFile {
+    param(
+        [Parameter(Mandatory)][string]$FilePath,
+        [Parameter(Mandatory)][string]$ChecksumPath
+    )
+
+    # LF line ending and no BOM so `shasum -c` / `sha256sum -c` work on
+    # macOS and Linux; Set-Content would write CRLF.
+    $hash = (Get-FileHash $FilePath -Algorithm SHA256).Hash.ToLowerInvariant()
+    [System.IO.File]::WriteAllText($ChecksumPath, "$hash  $(Split-Path $FilePath -Leaf)`n")
+}
+
 function Find-InnoSetupCompiler {
     $command = Get-Command iscc.exe -ErrorAction SilentlyContinue
     if ($command) {
@@ -152,8 +164,7 @@ try {
     }
 
     Compress-Archive -Path (Join-Path $stagingDirectory '*') -DestinationPath $zipPath -CompressionLevel Optimal
-    $hash = (Get-FileHash $zipPath -Algorithm SHA256).Hash.ToLowerInvariant()
-    "$hash  $(Split-Path $zipPath -Leaf)" | Set-Content $checksumPath -Encoding ascii
+    Write-ChecksumFile -FilePath $zipPath -ChecksumPath $checksumPath
 
     $installerPath = $null
     if ($CreateInstaller) {
@@ -174,8 +185,7 @@ try {
         if ($shouldSign) {
             Invoke-SignFile -Path $installerPath
         }
-        $installerHash = (Get-FileHash $installerPath -Algorithm SHA256).Hash.ToLowerInvariant()
-        "$installerHash  $(Split-Path $installerPath -Leaf)" | Set-Content "$installerPath.sha256" -Encoding ascii
+        Write-ChecksumFile -FilePath $installerPath -ChecksumPath "$installerPath.sha256"
     }
 
     Write-Host '==> Release artifacts'
