@@ -18,6 +18,7 @@ class SyncService extends ChangeNotifier {
   static const Duration _peerExpiry = Duration(seconds: 45);
   static const Duration _peerCleanupInterval = Duration(seconds: 5);
   static const Duration _syncAckTimeout = Duration(seconds: 3);
+  static const Duration _connectTimeout = Duration(seconds: 3);
 
   ServerSocket? _server;
   final SyncAdvertiser _advertiser = SyncAdvertiser();
@@ -84,7 +85,12 @@ class SyncService extends ChangeNotifier {
     _logInfo(
       'sendItemToPeer itemId=${item.id} peerId=${peer.id} displayName=${peer.displayName} host=${peer.host} port=${peer.port}',
     );
-    final socket = await Socket.connect(peer.host, peer.port);
+    // Stale peers would otherwise block on the OS TCP timeout (~20s on Windows).
+    final socket = await Socket.connect(
+      peer.host,
+      peer.port,
+      timeout: _connectTimeout,
+    );
     final ackCompleter = Completer<void>();
     final conn = SyncConnection(
       socket,
@@ -122,6 +128,9 @@ class SyncService extends ChangeNotifier {
       await _sendItems(conn, [item], remoteId: peer.id);
       await ackCompleter.future.timeout(_syncAckTimeout);
     } finally {
+      // Nobody awaits the completer after a timeout or send error; complete it
+      // so the close callback below cannot raise an unhandled async error.
+      if (!ackCompleter.isCompleted) ackCompleter.complete();
       await subscription.cancel();
       await conn.close();
     }

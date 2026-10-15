@@ -26,14 +26,13 @@ class DiscoveredPeer {
 
 class SyncDiscovery {
   RawDatagramSocket? _broadcastReceiveSocket;
-  RawDatagramSocket? _broadcastSendSocket;
+  final List<RawDatagramSocket> _broadcastSendSockets = [];
   SyncCadenceScheduler? _broadcastCadence;
   SyncCadenceScheduler? _mdnsCadence;
   MDnsClient? _mdnsClient;
   final Set<String> _localAddresses = {};
   final _peerCtrl = StreamController<DiscoveredPeer>.broadcast();
   Stream<DiscoveredPeer> get peers => _peerCtrl.stream;
-  InternetAddress? _localAddress;
 
   Future<void> start({
     required String localId,
@@ -167,8 +166,10 @@ class SyncDiscovery {
     required int serverPort,
   }) async {
     _logInfo('starting UDP broadcast discovery on port=$_broadcastPort');
-    _localAddress = await _discoverPreferredLocalIpv4();
-    _logInfo('selectedIPv4=${_localAddress?.address ?? "unavailable"}');
+    final sendAddresses = await _discoverLanIpv4Addresses();
+    _logInfo(
+      'selectedIPv4=${sendAddresses.isEmpty ? "unavailable" : sendAddresses.map((e) => e.address).join(", ")}',
+    );
 
     _broadcastReceiveSocket = await RawDatagramSocket.bind(
       InternetAddress.anyIPv4,
@@ -188,43 +189,59 @@ class SyncDiscovery {
       _handleBroadcastDatagram(datagram, localId);
     });
 
-    final sendBindAddress = _localAddress ?? InternetAddress.anyIPv4;
-    _broadcastSendSocket = await RawDatagramSocket.bind(
-      sendBindAddress,
-      0,
-      reuseAddress: true,
-      reusePort: true,
-    );
-    _broadcastSendSocket!
-      ..broadcastEnabled = true
-      ..readEventsEnabled = false
-      ..writeEventsEnabled = false;
+    // 255.255.255.255 only leaves through the interface a socket is bound to,
+    // so bind one sender per LAN adapter instead of guessing a single one.
+    final bindAddresses = sendAddresses.isEmpty
+        ? [InternetAddress.anyIPv4]
+        : sendAddresses;
+    for (final address in bindAddresses) {
+      try {
+        final socket = await RawDatagramSocket.bind(address, 0);
+        socket
+          ..broadcastEnabled = true
+          ..readEventsEnabled = false
+          ..writeEventsEnabled = false;
+        _broadcastSendSockets.add(socket);
+      } on SocketException catch (error) {
+        _logWarn(
+          'broadcast send socket bind failed address=${address.address} error=$error',
+        );
+      }
+    }
     _logInfo(
       'broadcast sockets ready receive=${_broadcastReceiveSocket!.address.address}:${_broadcastReceiveSocket!.port} '
-      'send=${_broadcastSendSocket!.address.address}:${_broadcastSendSocket!.port}',
+      'send=${_broadcastSendSockets.map((socket) => '${socket.address.address}:${socket.port}').join(", ")}',
     );
 
     void announce() {
-      final payload = utf8.encode(
-        jsonEncode({
-          'signature': _broadcastSignature,
-          'id': localId,
-          'name': localName,
-          'port': serverPort,
-          if (_localAddress != null) 'host': _localAddress!.address,
-        }),
-      );
-      try {
-        _broadcastSendSocket!.send(
-          payload,
-          InternetAddress('255.255.255.255'),
-          _broadcastPort,
+      for (final socket in _broadcastSendSockets) {
+        final bound = socket.address;
+        final payload = utf8.encode(
+          jsonEncode({
+            'signature': _broadcastSignature,
+            'id': localId,
+            'name': localName,
+            'port': serverPort,
+            // Informational for older receivers; current receivers use the
+            // datagram source address.
+            if (bound.address != InternetAddress.anyIPv4.address)
+              'host': bound.address,
+          }),
         );
-        _logDebug(
-          'broadcast announce id=$localId name=$localName port=$serverPort host=${_localAddress?.address ?? "packet-source"}',
-        );
-      } on SocketException catch (error) {
-        _logWarn('broadcast announce failed error=$error');
+        try {
+          socket.send(
+            payload,
+            InternetAddress('255.255.255.255'),
+            _broadcastPort,
+          );
+          _logDebug(
+            'broadcast announce id=$localId name=$localName port=$serverPort via=${bound.address}',
+          );
+        } on SocketException catch (error) {
+          _logWarn(
+            'broadcast announce failed via=${bound.address} error=$error',
+          );
+        }
       }
     }
 
@@ -253,7 +270,9 @@ class SyncDiscovery {
       final name = payload['name'] as String?;
       final port = payload['port'] as int?;
       if (id == null || port == null || id == localId) return;
-      final host = (payload['host'] as String?) ?? datagram.address.address;
+      // The source address is the route that actually reached us; the
+      // advertised host may belong to a VPN or virtual adapter.
+      final host = datagram.address.address;
       final displayName = (name != null && name.trim().isNotEmpty)
           ? name.trim()
           : _friendlyDisplayName(host, fallback: id);
@@ -267,7 +286,7 @@ class SyncDiscovery {
         ),
       );
       _logDebug(
-        'broadcast peer discovered id=$id displayName=$displayName host=$host sender=${datagram.address.address} port=$port',
+        'broadcast peer discovered id=$id displayName=$displayName host=$host advertisedHost=${payload['host']} port=$port',
       );
     } catch (_) {
       // Ignore malformed broadcast packets from unrelated applications.
@@ -283,9 +302,10 @@ class SyncDiscovery {
     _broadcastCadence = null;
     _broadcastReceiveSocket?.close();
     _broadcastReceiveSocket = null;
-    _broadcastSendSocket?.close();
-    _broadcastSendSocket = null;
-    _localAddress = null;
+    for (final socket in _broadcastSendSockets) {
+      socket.close();
+    }
+    _broadcastSendSockets.clear();
     _localAddresses.clear();
   }
 
@@ -341,7 +361,8 @@ class SyncDiscovery {
     return secondOctet != null && secondOctet >= 16 && secondOctet <= 31;
   }
 
-  Future<InternetAddress?> _discoverPreferredLocalIpv4() async {
+  /// Private IPv4 addresses on physical-looking adapters, in a stable order.
+  Future<List<InternetAddress>> _discoverLanIpv4Addresses() async {
     final interfaces = await NetworkInterface.list(
       includeLinkLocal: true,
       includeLoopback: false,
@@ -361,9 +382,8 @@ class SyncDiscovery {
       }
     }
 
-    if (candidates.isEmpty) return null;
     candidates.sort((a, b) => a.address.compareTo(b.address));
-    return candidates.first;
+    return candidates;
   }
 
   bool _looksVirtualInterface(String name) {
