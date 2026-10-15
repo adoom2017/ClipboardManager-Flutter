@@ -1,0 +1,92 @@
+name: Windows
+
+on:
+  push:
+    branches: [master]
+    tags: ['v*']
+  pull_request:
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  # Never cancel a tag build half-way through a release.
+  cancel-in-progress: ${{ !startsWith(github.ref, 'refs/tags/') }}
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    name: Build
+    runs-on: windows-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+          flutter-version: 3.44.8
+          cache: true
+
+      - name: Resolve version
+        id: version
+        shell: pwsh
+        run: |
+          if ($env:GITHUB_REF_TYPE -eq 'tag') {
+            $name = $env:GITHUB_REF_NAME -replace '^v', ''
+            if ($name -notmatch '^\d+\.\d+\.\d+$') {
+              throw "Tag '$env:GITHUB_REF_NAME' must look like v1.2.3"
+            }
+          } else {
+            $line = Select-String -Path pubspec.yaml -Pattern '^version:\s*([^+\s]+)' | Select-Object -First 1
+            $name = $line.Matches[0].Groups[1].Value
+          }
+          "name=$name" >> $env:GITHUB_OUTPUT
+          Write-Host "Build name: $name, build number: $env:GITHUB_RUN_NUMBER"
+
+      - name: Install Inno Setup
+        shell: pwsh
+        run: |
+          if (-not (Get-Command iscc.exe -ErrorAction SilentlyContinue) -and
+              -not (Test-Path "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe")) {
+            choco install innosetup --no-progress -y
+          }
+
+      - name: Analyze, test, build and package
+        shell: pwsh
+        run: >
+          ./scripts/build-release.ps1
+          -BuildName '${{ steps.version.outputs.name }}'
+          -BuildNumber '${{ github.run_number }}'
+          -CreateInstaller
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ClipboardManager-Windows-${{ steps.version.outputs.name }}
+          path: |
+            build/release/*.zip
+            build/release/*.zip.sha256
+            build/release/*-Setup.exe
+            build/release/*-Setup.exe.sha256
+          if-no-files-found: error
+          retention-days: 14
+
+  release:
+    name: Publish release
+    needs: build
+    if: startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: dist
+          merge-multiple: true
+
+      - uses: softprops/action-gh-release@v2
+        with:
+          files: dist/*
+          generate_release_notes: true
+          fail_on_unmatched_files: true
